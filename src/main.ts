@@ -44,14 +44,19 @@ function sendAreasToEngine(areas: Float64Array): void {
   }
 }
 
+// presetControls は tractEditor / controls のコールバックから参照されるため先に宣言
+let presetControls: PresetControls;
+
 // 断面積エディタ（source of truth は 16制御点、44区間はスプライン補間の導出値）
-const tractEditor = new TractEditor(canvas, sendAreasToEngine);
+// 第3引数: ドラッグ開始時にプリセットハイライトを解除
+const tractEditor = new TractEditor(canvas, sendAreasToEngine, () => {
+  presetControls.setActivePreset(null);
+});
 
 // 遷移マネージャ（プリセット切替時のコサイン補間）
-// controlPoints は tractEditor の内部状態を直接参照（source of truth）
-// onUpdate で tractEditor の表示を更新し、Engine にも送信
+// getCurrentPoints で現在値をスナップショット取得、onUpdate で TractEditor に書き戻す
 const transitionManager = new TransitionManager(
-  tractEditor.getControlPoints() as Float64Array,
+  () => tractEditor.getControlPoints(),
   (points) => {
     tractEditor.setControlPoints(points);
     // setControlPoints 内で onAreasChange → sendAreasToEngine が呼ばれるため
@@ -76,12 +81,13 @@ const controls: Controls = new Controls(
   },
   () => {
     engine.stop();
+    presetControls.setNoiseActive(false);
     controls.setState('idle');
   },
 );
 
 // プリセットボタン + Noise ボタン
-const presetControls = new PresetControls(
+presetControls = new PresetControls(
   presetsContainer,
   noiseBtn,
   // onPresetSelect: プリセット選択 → TransitionManager で滑らかに遷移
@@ -93,6 +99,3 @@ const presetControls = new PresetControls(
     engine.setSourceType(isNoise ? 'noise' : 'voiced');
   },
 );
-
-// presetControls を参照してlinterのunused警告を回避
-void presetControls;

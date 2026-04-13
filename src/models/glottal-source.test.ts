@@ -43,6 +43,8 @@ describe('Klglott88Source - KLGLOTT88 波形', () => {
   it('OQ=MIN_OQ(0.3) で波形が正しい', () => {
     const gs = new Klglott88Source();
     gs.setOpenQuotient(MIN_OQ);
+    // pending OQ パターン: 閉鎖相を通過して新OQを適用
+    gs.generate(0.9);
     const peak = MIN_OQ * (2 / 3);
     expect(gs.generate(peak)).toBeCloseTo(1, 4);
     expect(gs.generate(MIN_OQ)).toBe(0);
@@ -51,6 +53,7 @@ describe('Klglott88Source - KLGLOTT88 波形', () => {
   it('OQ=MAX_OQ(0.8) で波形が正しい', () => {
     const gs = new Klglott88Source();
     gs.setOpenQuotient(MAX_OQ);
+    gs.generate(0.9); // 閉鎖相で pending OQ を適用
     const peak = MAX_OQ * (2 / 3);
     expect(gs.generate(peak)).toBeCloseTo(1, 4);
     expect(gs.generate(MAX_OQ)).toBe(0);
@@ -58,12 +61,12 @@ describe('Klglott88Source - KLGLOTT88 波形', () => {
 
   it('OQ はクランプされる（範囲外）', () => {
     const gs = new Klglott88Source();
-    gs.setOpenQuotient(0.1); // < MIN_OQ
-    // MIN_OQ=0.3 にクランプされる → peakは 0.3*2/3=0.2
-    expect(gs.generate(0.2)).toBeCloseTo(1, 3);
+    gs.setOpenQuotient(0.1); // < MIN_OQ → 0.3 にクランプ
+    gs.generate(0.9); // 閉鎖相で pending OQ を適用
+    expect(gs.generate(MIN_OQ * (2 / 3))).toBeCloseTo(1, 3);
 
-    gs.setOpenQuotient(1.0); // > MAX_OQ
-    // MAX_OQ=0.8 にクランプされる → peakは 0.8*2/3≈0.533
+    gs.setOpenQuotient(1.0); // > MAX_OQ → 0.8 にクランプ
+    gs.generate(0.9); // 閉鎖相で pending OQ を適用
     expect(gs.generate(MAX_OQ * (2 / 3))).toBeCloseTo(1, 3);
   });
 });

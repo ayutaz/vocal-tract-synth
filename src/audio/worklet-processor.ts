@@ -86,8 +86,10 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         // 有声/無声の切り替え (CROSSFADE_SAMPLES かけてクロスフェード)
         this.glottalSource.setSourceType(msg.sourceType);
       } else if (msg.type === 'setOQ') {
-        // Open Quotient の更新
-        this.glottalSource.setOpenQuotient(msg.oq);
+        // Open Quotient の更新（NaN/Infinity は無視）
+        if (Number.isFinite(msg.oq)) {
+          this.glottalSource.setOpenQuotient(msg.oq);
+        }
       }
     };
   }

@@ -55,6 +55,9 @@ export type WorkletMessage =
 
 export interface GlottalModel {
   generate(phase: number): number;
+  generateWithMix(phase: number): number;
+  setSourceType(type: SourceType): void;
+  setOpenQuotient(oq: number): void;
   reset(): void;
 }
 

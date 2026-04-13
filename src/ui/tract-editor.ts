@@ -67,7 +67,11 @@ export class TractEditor {
   private draggingIndex: number | null = null;
   private activePointerId: number | null = null;
 
-  constructor(canvas: HTMLCanvasElement, onAreasChange: AreasChangeCallback) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    onAreasChange: AreasChangeCallback,
+    private readonly onDragStart?: () => void,
+  ) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -333,6 +337,9 @@ export class TractEditor {
     this.activePointerId = ev.pointerId;
     this.canvas.setPointerCapture(ev.pointerId);
     ev.preventDefault();
+
+    // ドラッグ開始をコールバックで通知
+    this.onDragStart?.();
 
     // ドラッグ開始直後に値を更新（クリックだけでも反応）
     this.updateFromPointer(py);

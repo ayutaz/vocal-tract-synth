@@ -27,6 +27,8 @@ import type { GlottalModel, SourceType } from '../types/index.js';
 export class Klglott88Source implements GlottalModel {
   // OQ (Open Quotient): 声門が開いている割合
   private openQuotient: number = DEFAULT_OQ;
+  // OQ変更を次の閉鎖相まで遅延（開放相途中の変更による波形不連続を防止）
+  private pendingOQ: number | null = null;
 
   // 有声/無声の状態
   private sourceType: SourceType = 'voiced';
@@ -53,7 +55,11 @@ export class Klglott88Source implements GlottalModel {
     const oq = this.openQuotient;
 
     if (phase >= oq) {
-      // 閉鎖相
+      // 閉鎖相 — pending OQ があればここで適用（波形不連続を防止）
+      if (this.pendingOQ !== null) {
+        this.openQuotient = this.pendingOQ;
+        this.pendingOQ = null;
+      }
       return 0;
     }
 
@@ -108,7 +114,8 @@ export class Klglott88Source implements GlottalModel {
   setOpenQuotient(oq: number): void {
     if (oq < MIN_OQ) oq = MIN_OQ;
     if (oq > MAX_OQ) oq = MAX_OQ;
-    this.openQuotient = oq;
+    // 次の閉鎖相で適用（開放相途中の変更による波形クリックを防止）
+    this.pendingOQ = oq;
   }
 
   /**
@@ -116,6 +123,7 @@ export class Klglott88Source implements GlottalModel {
    */
   reset(): void {
     this.openQuotient = DEFAULT_OQ;
+    this.pendingOQ = null;
     this.sourceType = 'voiced';
     this.crossfadeRemaining = 0;
     this.voicedGain = 1.0;

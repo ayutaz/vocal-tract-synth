@@ -5,7 +5,7 @@
 //
 // 制御点 index 規約: 0 が唇側、15 が声門側。
 
-import { NUM_CONTROL_POINTS, type VowelId, type VowelPreset } from '../types/index';
+import { NUM_CONTROL_POINTS, DEFAULT_AREA, type VowelId, type VowelPreset } from '../types/index';
 
 // ---------------------------------------------------------------------------
 // 断面積プリセットデータ (16 制御点, cm², 唇 index=0 → 声門 index=15)
@@ -74,6 +74,8 @@ export class TransitionManager {
   // 遷移中の開始・終了スナップショット
   private startPoints: Float64Array;
   private targetPoints: Float64Array;
+  // 補間結果を書き込む内部バッファ
+  private interpolatedPoints: Float64Array;
 
   // 遷移タイミング
   private startTime = 0;
@@ -84,11 +86,12 @@ export class TransitionManager {
   private rafId = 0;
 
   constructor(
-    private controlPoints: Float64Array, // 16 制御点 (source of truth を参照)
-    private onUpdate: (points: Float64Array) => void,
+    private getCurrentPoints: () => Readonly<Float64Array>,  // 現在値の取得
+    private onUpdate: (points: Float64Array) => void,        // 更新通知
   ) {
     this.startPoints = new Float64Array(NUM_CONTROL_POINTS);
     this.targetPoints = new Float64Array(NUM_CONTROL_POINTS);
+    this.interpolatedPoints = new Float64Array(NUM_CONTROL_POINTS);
   }
 
   // ----- 公開 API -----
@@ -102,11 +105,13 @@ export class TransitionManager {
 
   /** 任意の断面積配列への遷移 */
   transitionToCustom(target: ArrayLike<number>, durationMs: number = DEFAULT_DURATION_MS): void {
+    // 現在の制御点をスナップショットとして取得
+    const current = this.getCurrentPoints();
     // 現在の制御点を遷移開始地点としてコピー
-    this.startPoints.set(this.controlPoints);
+    this.startPoints.set(current);
     // 目標値をコピー
     for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
-      this.targetPoints[i] = (i < target.length ? target[i] : this.controlPoints[i]) ?? 0;
+      this.targetPoints[i] = (i < target.length ? target[i] : current[i]) ?? DEFAULT_AREA;
     }
 
     this.startTime = performance.now();
@@ -139,11 +144,11 @@ export class TransitionManager {
     const tSmooth = 0.5 * (1 - Math.cos(Math.PI * tLinear));
 
     for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
-      this.controlPoints[i] =
+      this.interpolatedPoints[i] =
         (1 - tSmooth) * (this.startPoints[i] ?? 0) + tSmooth * (this.targetPoints[i] ?? 0);
     }
 
-    this.onUpdate(this.controlPoints);
+    this.onUpdate(this.interpolatedPoints);
 
     // 遷移完了判定
     if (tLinear >= 1) {
@@ -161,8 +166,8 @@ export class TransitionManager {
     if (!this.transitioning) return;
 
     // 目標値を即座に適用
-    this.controlPoints.set(this.targetPoints);
-    this.onUpdate(this.controlPoints);
+    this.interpolatedPoints.set(this.targetPoints);
+    this.onUpdate(this.interpolatedPoints);
 
     this.transitioning = false;
     if (this.rafId !== 0) {
@@ -182,15 +187,17 @@ export class TransitionManager {
 
   // ----- 内部 -----
 
+  // rAF コールバック（bound method でクロージャ毎回生成を回避）
+  private tick = (): void => {
+    this.update();
+    if (this.transitioning) {
+      this.rafId = requestAnimationFrame(this.tick);
+    } else {
+      this.rafId = 0;
+    }
+  };
+
   private scheduleUpdate(): void {
-    this.rafId = requestAnimationFrame(() => {
-      this.update();
-      // 遷移中ならループ継続
-      if (this.transitioning) {
-        this.scheduleUpdate();
-      } else {
-        this.rafId = 0;
-      }
-    });
+    this.rafId = requestAnimationFrame(this.tick);
   }
 }
