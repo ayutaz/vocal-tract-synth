@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>声道シンセサイザー</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <h1>声道シンセサイザー</h1>
+      <div id="canvas-container">
+        <canvas id="tract-canvas"></canvas>
+      </div>
+      <div id="controls">
+        <button id="start-stop-btn" type="button">Start</button>
+        <span id="status-text">停止中</span>
+        <span id="error-text" class="error" hidden></span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
