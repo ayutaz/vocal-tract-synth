@@ -12,6 +12,7 @@
 // ============================================================================
 
 import type { AppState, VowelId } from '../types/index';
+import { MIN_F0, MAX_F0 } from '../types/index';
 
 // ============================================================================
 // Controls クラス
@@ -225,4 +226,115 @@ export class PresetControls {
     this.noiseBtn.classList.toggle('active', this.isNoise);
     this.onNoiseToggle(this.isNoise);
   };
+}
+
+// ============================================================================
+// スライダー変換関数（F0 対数スケール）
+// ----------------------------------------------------------------------------
+// sliderValue ∈ [0, 1] ⟷ F0 ∈ [MIN_F0, MAX_F0] を対数スケールで相互変換。
+// ============================================================================
+
+/** スライダー値 (0-1) → F0 (Hz)。対数スケール。 */
+export function sliderToF0(value: number): number {
+  return MIN_F0 * Math.pow(MAX_F0 / MIN_F0, value);
+}
+
+/** F0 (Hz) → スライダー値 (0-1)。対数スケール。 */
+export function f0ToSlider(hz: number): number {
+  return Math.log(hz / MIN_F0) / Math.log(MAX_F0 / MIN_F0);
+}
+
+// ============================================================================
+// F0スライダー・音量スライダー (SliderControls)
+// ----------------------------------------------------------------------------
+// F0スライダー（対数スケール: 50–400Hz）と音量スライダー（リニア: 0–100%）を
+// 管理する。外部から setF0() で値を変更可能（Auto Sing 等で使用）。
+// ============================================================================
+
+const DEFAULT_F0_HZ = 120;
+const DEFAULT_VOLUME = 0.3;
+
+export class SliderControls {
+  private readonly f0Slider: HTMLInputElement;
+  private readonly f0ValueEl: HTMLElement;
+  private readonly volumeSlider: HTMLInputElement;
+  private readonly volumeValueEl: HTMLElement;
+  private readonly onF0Change: (hz: number) => void;
+  private readonly onVolumeChange: (value: number) => void;
+
+  constructor(
+    f0Slider: HTMLInputElement,
+    f0ValueEl: HTMLElement,
+    volumeSlider: HTMLInputElement,
+    volumeValueEl: HTMLElement,
+    onF0Change: (hz: number) => void,
+    onVolumeChange: (value: number) => void,
+  ) {
+    this.f0Slider = f0Slider;
+    this.f0ValueEl = f0ValueEl;
+    this.volumeSlider = volumeSlider;
+    this.volumeValueEl = volumeValueEl;
+    this.onF0Change = onF0Change;
+    this.onVolumeChange = onVolumeChange;
+
+    // F0スライダー初期化（対数スケール）
+    this.f0Slider.min = '0';
+    this.f0Slider.max = '1';
+    this.f0Slider.step = '0.001';
+    this.f0Slider.value = String(f0ToSlider(DEFAULT_F0_HZ));
+    this.updateF0Display(DEFAULT_F0_HZ);
+
+    // 音量スライダー初期化（リニア）
+    this.volumeSlider.min = '0';
+    this.volumeSlider.max = '1';
+    this.volumeSlider.step = '0.01';
+    this.volumeSlider.value = String(DEFAULT_VOLUME);
+    this.updateVolumeDisplay(DEFAULT_VOLUME);
+
+    // イベント登録
+    this.f0Slider.addEventListener('input', this.handleF0Input);
+    this.volumeSlider.addEventListener('input', this.handleVolumeInput);
+  }
+
+  // ==========================================================================
+  // 公開 API
+  // ==========================================================================
+
+  /** 外部からF0を設定する（Auto Sing 等で使用）。スライダー位置と表示も更新。 */
+  setF0(hz: number): void {
+    this.f0Slider.value = String(f0ToSlider(hz));
+    this.updateF0Display(hz);
+    this.onF0Change(hz);
+  }
+
+  /** リソース解放（イベント解除） */
+  destroy(): void {
+    this.f0Slider.removeEventListener('input', this.handleF0Input);
+    this.volumeSlider.removeEventListener('input', this.handleVolumeInput);
+  }
+
+  // ==========================================================================
+  // 内部
+  // ==========================================================================
+
+  private handleF0Input = (): void => {
+    const sliderValue = parseFloat(this.f0Slider.value);
+    const hz = sliderToF0(sliderValue);
+    this.updateF0Display(hz);
+    this.onF0Change(hz);
+  };
+
+  private handleVolumeInput = (): void => {
+    const value = parseFloat(this.volumeSlider.value);
+    this.updateVolumeDisplay(value);
+    this.onVolumeChange(value);
+  };
+
+  private updateF0Display(hz: number): void {
+    this.f0ValueEl.textContent = `${Math.round(hz)} Hz`;
+  }
+
+  private updateVolumeDisplay(value: number): void {
+    this.volumeValueEl.textContent = `${Math.round(value * 100)}%`;
+  }
 }

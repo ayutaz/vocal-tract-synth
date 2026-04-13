@@ -1,14 +1,16 @@
 // ============================================================================
 // エントリポイント — 各モジュールの結線
 // ----------------------------------------------------------------------------
-// Phase 2: 母音プリセット、TransitionManager、有声/無声切替を追加。
+// Phase 3: スペクトル表示、フォルマント計算、F0/音量スライダーを追加。
 // ============================================================================
 
 import './style.css';
 import { TractEditor } from './ui/tract-editor';
-import { Controls, PresetControls } from './ui/controls';
+import { Controls, PresetControls, SliderControls } from './ui/controls';
 import { AudioEngine } from './audio/engine';
 import { TransitionManager } from './models/vowel-presets';
+import { SpectrumDisplay } from './ui/spectrum-display';
+import { calculateFormants } from './models/formant-calculator';
 
 // --- DOM 要素の取得 ---
 
@@ -32,36 +34,84 @@ const statusText = requireElement('status-text', HTMLElement);
 const errorText = requireElement('error-text', HTMLElement);
 const presetsContainer = requireElement('presets', HTMLElement);
 const noiseBtn = requireElement('noise-btn', HTMLButtonElement);
+const f0Slider = requireElement('f0-slider', HTMLInputElement);
+const f0Value = requireElement('f0-value', HTMLElement);
+const volumeSlider = requireElement('volume-slider', HTMLInputElement);
+const volumeValue = requireElement('volume-value', HTMLElement);
+const spectrumCanvas = requireElement('spectrum-canvas', HTMLCanvasElement);
+const overlayCanvas = requireElement('overlay-canvas', HTMLCanvasElement);
+
+// フォルマント表示要素
+const formantF1 = document.querySelector<HTMLElement>('#formant-display .f1')!;
+const formantF2 = document.querySelector<HTMLElement>('#formant-display .f2')!;
+const formantF3 = document.querySelector<HTMLElement>('#formant-display .f3')!;
 
 // --- コア・モジュール ---
 
 const engine = new AudioEngine();
 
-// 断面積をEngineに送信するヘルパ（エディタ変更 / 遷移更新の両方で使用）
+// 断面積をEngineに送信するヘルパ
 function sendAreasToEngine(areas: Float64Array): void {
   if (engine.isRunning()) {
     engine.sendAreas(areas);
   }
 }
 
-// presetControls は tractEditor / controls のコールバックから参照されるため先に宣言
+// --- フォルマント計算（dirtyフラグ + throttle） ---
+
+let formantDirty = false;
+let lastFormantUpdate = 0;
+const FORMANT_INTERVAL = 80; // ~12fps
+
+function scheduleFormantUpdate(): void {
+  formantDirty = true;
+}
+
+function tickFormants(): void {
+  if (!formantDirty) return;
+  const now = performance.now();
+  if (now - lastFormantUpdate < FORMANT_INTERVAL) return;
+
+  formantDirty = false;
+  lastFormantUpdate = now;
+
+  const areas = tractEditor.getSectionAreas();
+  const result = calculateFormants(areas);
+  spectrumDisplay.updateFormants(result.f1, result.f2, result.f3);
+}
+
+// rAF ループでフォルマント計算を定期実行
+let formantRafId = 0;
+function formantLoop(): void {
+  tickFormants();
+  formantRafId = requestAnimationFrame(formantLoop);
+}
+
+// --- presetControls は tractEditor / controls のコールバックから参照されるため先に宣言 ---
 let presetControls: PresetControls;
 
-// 断面積エディタ（source of truth は 16制御点、44区間はスプライン補間の導出値）
-// 第3引数: ドラッグ開始時にプリセットハイライトを解除
-const tractEditor = new TractEditor(canvas, sendAreasToEngine, () => {
+// 断面積エディタ
+const tractEditor = new TractEditor(canvas, (areas) => {
+  sendAreasToEngine(areas);
+  scheduleFormantUpdate();
+}, () => {
   presetControls.setActivePreset(null);
 });
 
-// 遷移マネージャ（プリセット切替時のコサイン補間）
-// getCurrentPoints で現在値をスナップショット取得、onUpdate で TractEditor に書き戻す
+// 遷移マネージャ
 const transitionManager = new TransitionManager(
   () => tractEditor.getControlPoints(),
   (points) => {
     tractEditor.setControlPoints(points);
-    // setControlPoints 内で onAreasChange → sendAreasToEngine が呼ばれるため
-    // ここで重複送信しない
+    // setControlPoints → onAreasChange → sendAreasToEngine + scheduleFormantUpdate
   },
+);
+
+// スペクトル表示
+const spectrumDisplay = new SpectrumDisplay(
+  spectrumCanvas,
+  overlayCanvas,
+  { f1: formantF1, f2: formantF2, f3: formantF3 },
 );
 
 // Start/Stop ボタン
@@ -74,12 +124,29 @@ const controls: Controls = new Controls(
     try {
       await engine.start(tractEditor.getSectionAreas());
       controls.setState('running');
+
+      // スペクトル表示を開始
+      const analyser = engine.getAnalyser();
+      if (analyser) {
+        spectrumDisplay.setAnalyser(analyser);
+        spectrumDisplay.start();
+      }
+
+      // フォルマント計算ループ開始
+      scheduleFormantUpdate();
+      formantRafId = requestAnimationFrame(formantLoop);
     } catch (err) {
       engine.stop();
       throw err;
     }
   },
   () => {
+    // フォルマント計算ループ停止
+    if (formantRafId !== 0) {
+      cancelAnimationFrame(formantRafId);
+      formantRafId = 0;
+    }
+    spectrumDisplay.stop();
     engine.stop();
     presetControls.setNoiseActive(false);
     controls.setState('idle');
@@ -90,12 +157,24 @@ const controls: Controls = new Controls(
 presetControls = new PresetControls(
   presetsContainer,
   noiseBtn,
-  // onPresetSelect: プリセット選択 → TransitionManager で滑らかに遷移
   (id) => {
     transitionManager.transitionTo(id);
   },
-  // onNoiseToggle: 有声/無声切替 → Engine に送信
   (isNoise) => {
     engine.setSourceType(isNoise ? 'noise' : 'voiced');
   },
 );
+
+// F0 / 音量スライダー
+const sliderControls = new SliderControls(
+  f0Slider, f0Value,
+  volumeSlider, volumeValue,
+  (hz) => { engine.setFrequency(hz); },
+  (value) => { engine.setVolume(value); },
+);
+
+void sliderControls;
+
+// 初期フォルマント計算（Canvas表示用）
+scheduleFormantUpdate();
+tickFormants();

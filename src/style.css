@@ -138,3 +138,80 @@ h1 {
   color: #1a1a2e;
   border-color: #ff6b6b;
 }
+
+/* ===== スライダー ===== */
+
+#sliders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.slider-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.slider-label {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #a0c4ff;
+  min-width: 28px;
+}
+
+.slider-group input[type="range"] {
+  flex: 1;
+  accent-color: #4cc9f0;
+}
+
+.slider-group span:last-child {
+  font-size: 0.8rem;
+  color: #888;
+  min-width: 56px;
+  text-align: right;
+}
+
+/* ===== スペクトル表示 ===== */
+
+#spectrum-container {
+  position: relative;
+  background: #0e1628;
+  border: 1px solid #334;
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 12px;
+}
+
+#spectrum-canvas,
+#overlay-canvas {
+  display: block;
+  width: 100%;
+  height: 200px;
+}
+
+#overlay-canvas {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  pointer-events: none;
+}
+
+#formant-display {
+  display: flex;
+  gap: 16px;
+  padding: 4px 0 0;
+  font-size: 0.8rem;
+}
+
+.formant {
+  font-weight: bold;
+}
+
+.formant.f1 { color: #ff6b6b; }
+.formant.f2 { color: #ffd166; }
+.formant.f3 { color: #72efdd; }

@@ -6,8 +6,7 @@
 // - AudioWorkletNode → GainNode → destination のノード接続
 // - メインスレッド → Worklet への postMessage（断面積・音源切替）
 // - F0 の AudioParam 設定
-//
-// Phase 3 では GainNode と destination の間に AnalyserNode を挿入する。
+// - AnalyserNode によるスペクトル分析（Phase 3）
 // ============================================================================
 
 import type { WorkletMessage, SourceType } from '../types/index';
@@ -25,6 +24,7 @@ export class AudioEngine {
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private gainNode: GainNode | null = null;
+  private analyserNode: AnalyserNode | null = null;
   private frequencyParam: AudioParam | null = null;
 
   /**
@@ -72,13 +72,21 @@ export class AudioEngine {
       freqParam.setValueAtTime(DEFAULT_F0, ctx.currentTime);
     }
 
-    // GainNode（音量制御）→ destination
+    // GainNode（音量制御）
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(DEFAULT_MASTER_GAIN, ctx.currentTime);
     this.gainNode = gain;
 
+    // AnalyserNode（スペクトル分析）
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.8;
+    this.analyserNode = analyser;
+
+    // ノード接続: WorkletNode → GainNode → AnalyserNode → destination
     node.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(analyser);
+    analyser.connect(ctx.destination);
 
     // 初期断面積を送信
     this.sendAreas(initialAreas);
@@ -106,6 +114,14 @@ export class AudioEngine {
         // 既に切断済み等は無視
       }
       this.gainNode = null;
+    }
+    if (this.analyserNode !== null) {
+      try {
+        this.analyserNode.disconnect();
+      } catch {
+        // 既に切断済み等は無視
+      }
+      this.analyserNode = null;
     }
 
     // AudioContext を close（Promise は待たずに投げっぱなし）
@@ -154,6 +170,23 @@ export class AudioEngine {
     if (this.workletNode === null) return;
     const msg: WorkletMessage = { type: 'setOQ', oq };
     this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * AnalyserNode を返す。未初期化時は null。
+   * スペクトル表示やフォルマント計算に使用する。
+   */
+  getAnalyser(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  /**
+   * マスタ音量を設定する。
+   * @param value 0.0（無音）〜 1.0（最大）
+   */
+  setVolume(value: number): void {
+    if (this.gainNode === null || this.audioContext === null) return;
+    this.gainNode.gain.setValueAtTime(value, this.audioContext.currentTime);
   }
 
   /**
