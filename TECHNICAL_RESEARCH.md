@@ -194,11 +194,13 @@ NUM_CONTROL_POINTS = 16 (UI上の制御点数)
 
 1. 断面積列 → 反射係数列を計算
 2. 反射係数列 → LPC多項式に変換 (step-up procedure)
-3. LPC多項式 → コンパニオン行列を構成 (N×N)
+<!-- REVIEW: 技術的正確性レビューにて修正 — N区間の反射係数はN-1個なので、LPC多項式はN-1次、コンパニオン行列は(N-1)×(N-1) -->
+3. LPC多項式 → コンパニオン行列を構成 ((N-1)×(N-1))
 4. QR法で固有値を計算
 5. 固有値の角度からフォルマント周波数、絶対値から帯域幅を抽出
 
-計算コスト: 44×44行列のQR分解で約1〜3ms。60fpsの描画予算 (16.7ms) に十分収まる。
+<!-- REVIEW: 技術的正確性レビューにて修正 — 43×43に修正（44区間から得られる反射係数は43個） -->
+計算コスト: 43×43行列のQR分解で約1〜3ms。60fpsの描画予算 (16.7ms) に十分収まる。
 
 ### 5.2 スペクトル表示用: AnalyserNode
 
@@ -298,6 +300,7 @@ NUM_CONTROL_POINTS = 16 (UI上の制御点数)
 
 ### 9.1 ディレクトリ構造
 
+<!-- REVIEW: アーキテクチャレビューにて修正 — Phase 4 の auto-singer サブディレクトリ構造と Phase 5 で分離する radiation-filter.ts / output-mixer.ts を反映。 -->
 ```
 vocal-tract-synth/
 ├── index.html
@@ -311,20 +314,29 @@ vocal-tract-synth/
     ├── style.css
     ├── audio/
     │   ├── engine.ts              # AudioContext管理、ノード接続
-    │   ├── worklet-processor.ts   # AudioWorkletProcessor (別バンドル)
+    │   ├── worklet-processor.ts   # AudioWorkletProcessor (別バンドル、オーケストレーター)
     │   └── parameters.ts          # オーディオパラメータ定義
     ├── models/
-    │   ├── vocal-tract.ts         # 声道の物理モデル (44区間)
-    │   ├── glottal-source.ts      # 声門音源モデル
-    │   ├── formant-calculator.ts  # フォルマント直接計算
-    │   └── vowel-presets.ts       # 母音プリセットデータ
+    │   ├── vocal-tract.ts         # 声道の物理モデル — KLアルゴリズム (44区間)
+    │   ├── glottal-source.ts      # 声門音源モデル (KLGLOTT88 + LF)
+    │   ├── radiation-filter.ts    # 放射フィルタ + 唇端反射 (Phase 5で vocal-tract.ts から分離)
+    │   ├── output-mixer.ts        # 有声/無声/気息ノイズ混合 (Phase 5で追加)
+    │   ├── formant-calculator.ts  # フォルマント直接計算 (Phase 3)
+    │   └── vowel-presets.ts       # 母音プリセットデータ (Phase 2)
     ├── ui/
     │   ├── tract-editor.ts        # 声道断面積エディタ (Canvas)
-    │   ├── spectrum-display.ts    # スペクトル表示 (Canvas)
+    │   ├── spectrum-display.ts    # スペクトル表示 (Canvas, Phase 3)
     │   ├── controls.ts            # ボタン・スライダー
-    │   └── auto-singer.ts         # 自動歌唱モード制御
+    │   └── auto-singer/           # 自動歌唱モード (Phase 4)
+    │       ├── index.ts           # 統合コーディネータ
+    │       ├── melody-generator.ts    # メロディ生成 (マルコフ連鎖)
+    │       ├── vowel-sequencer.ts     # 母音遷移エンジン
+    │       ├── expression-engine.ts   # ビブラート・ポルタメント
+    │       ├── rhythm-engine.ts       # リズム生成
+    │       ├── phrase-manager.ts      # フレーズ構造・ADSR・ブレス
+    │       └── ui-controls.ts         # Auto Singボタン・速度スライダー
     └── types/
-        └── index.ts               # 共有型定義
+        └── index.ts               # 共有型定義 (メッセージ型の判別共用体を含む)
 ```
 
 ### 9.2 AudioWorklet のビルド

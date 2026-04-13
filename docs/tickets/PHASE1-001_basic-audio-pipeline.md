@@ -4,7 +4,8 @@
 **マイルストーン**: [Phase 1](../MILESTONES.md#phase-1-基本音声パイプライン--音が出る)
 **状態**: 🔲 未着手
 **前提条件**: なし
-**成果物**: パルス音源 + 44区間KL + 差分放射フィルタ + 基本Canvas UI
+<!-- REVIEW: Phase間整合性レビューにて修正 — スコープ内（セクション4.1）に壁面損失(mu=0.999)が含まれているため成果物に追加 -->
+**成果物**: パルス音源 + 44区間KL + 壁面損失(mu=0.999) + 差分放射フィルタ + 基本Canvas UI
 
 ---
 
@@ -98,13 +99,21 @@ AudioWorkletProcessorのサブクラスを実装する。
 
 **通信プロトコル** (`port.onmessage`):
 ```typescript
-// メインスレッド → Worklet
+// メインスレッド → Worklet（判別共用体型で Phase 5 まで拡張可能に設計）
+// Phase 1
 { type: 'setAreas', areas: Float64Array }  // 44要素の断面積配列
-{ type: 'setSourceType', sourceType: 'pulse' | 'noise' }  // 音源切替
+<!-- REVIEW: Phase間整合性レビューにて修正 — setSourceType は Phase 1 で型定義のみ行い、実際の有声/無声切替ロジック（クロスフェード含む）は Phase 2 で実装する。Phase 1 の段階では 'pulse' のみ有効 -->
+{ type: 'setSourceType', sourceType: 'pulse' | 'noise' }  // 音源切替（型定義のみ、Phase 2 で実装）
+// Phase 2 で追加予定: { type: 'setOQ', oq: number }
+// Phase 4 で追加予定: { type: 'setJitter', amount: number }, { type: 'setShimmer', amount: number }
+// Phase 5 で追加予定: { type: 'setGlottalModel', model: 'klglott88' | 'lf' }
+//                      { type: 'setRd', rd: number }, { type: 'setAspiration', level: number }
 
 // AudioParam (k-rate)
 frequency: F0 (Hz)  // デフォルト 120Hz
 ```
+
+<!-- REVIEW: アーキテクチャレビューにて修正 — Phase 1 の通信プロトコル定義に Phase 2-5 で追加されるメッセージ型のコメントを追記。types/index.ts の判別共用体型を設計する際、将来のメッセージ型を見通せるようにした。 -->
 
 **ビルド方法**:
 ```typescript
@@ -199,13 +208,14 @@ phase >= OQ:      output = 0                                (閉鎖期)
 
 唇端からの音響放射特性を1次差分フィルタで近似する。
 
+<!-- REVIEW: 技術的正確性レビューにて修正 — f_N → f_0 に変更。唇端は index=0 であるため f_0 が正しい表記（PHASE2-001の放射フィルタ記述と統一） -->
 ```
-output[n] = f_N[n] - alpha * f_N[n-1]
+output[n] = f_0[n] - alpha * f_0[n-1]
 alpha ≈ 0.9〜0.97
 ```
 
-- `f_N` は唇端（index=0）の進行波
-- `f_N[n-1]` は1サンプル前の値（状態変数として保持）
+- `f_0` は唇端（index=0）の進行波
+- `f_0[n-1]` は1サンプル前の値（状態変数として保持）
 - Phase 1では alpha = 0.97 固定
 
 ### 2.6 メインスレッド - AudioWorklet通信 (`src/audio/engine.ts`)
@@ -240,11 +250,12 @@ F0変更
 
 **`src/audio/parameters.ts`**: AudioWorkletNodeのparameterDescriptors定義を格納する。
 
+<!-- REVIEW: Phase間整合性レビューにて修正 — maxValueを400に統一（Phase 3のF0スライダー範囲 50-400Hz と一致させる） -->
 ```typescript
 // worklet-processor.ts 内の static get parameterDescriptors
 static get parameterDescriptors(): AudioParamDescriptor[] {
   return [
-    { name: 'frequency', defaultValue: 120, minValue: 50, maxValue: 600, automationRate: 'k-rate' },
+    { name: 'frequency', defaultValue: 120, minValue: 50, maxValue: 400, automationRate: 'k-rate' },
   ];
 }
 ```
@@ -268,11 +279,18 @@ static get parameterDescriptors(): AudioParamDescriptor[] {
 - `setPointerCapture` でCanvas外ドラッグに対応
 - Canvas要素に `touch-action: none` を設定
 
+<!-- REVIEW: アーキテクチャレビューにて修正 — 断面積配列の正（canonical）状態の所在を明記。 -->
+**断面積の正状態 (source of truth)**:
+- **16制御点**: メインスレッドの `TractEditor` が保持する `Float64Array(16)` が正。手動ドラッグ、プリセット選択、Auto Sing のいずれも、まずこの 16 点を更新する。
+- **44区間断面積**: メインスレッドでスプライン補間後の `Float64Array(44)` が正。postMessage で Worklet に送信されるのはこのコピー。
+- **Worklet側の断面積**: postMessage 受信時に内部バッファにコピーした値。これは正状態のレプリカであり、Worklet 側で断面積を変更することはない。
+- **フォルマント計算**: メインスレッド側の 44 区間断面積（正状態）を入力として使用する。Worklet からの逆通信は不要。
+
 **リアルタイム反映**:
 - ドラッグ中の `pointermove` ごとに:
-  1. 16制御点の値を更新
-  2. スプライン補間で44区間断面積を計算
-  3. postMessageでAudioWorkletに送信
+  1. 16制御点の値を更新（正状態の更新）
+  2. スプライン補間で44区間断面積を計算（正状態の導出）
+  3. postMessageでAudioWorkletに送信（レプリカの同期）
   4. Canvas再描画
 
 **スプライン補間** (16制御点 → 44区間):
@@ -442,15 +460,27 @@ Step 3:
 - 音量スライダーUI（Phase 3）
 - 有声/無声切替UI（Phase 2）
 - 自動歌唱モード（Phase 4）
-- ジッター / シマー（Phase 5）
+<!-- REVIEW: プロジェクト管理レビューにて修正 — ジッター/シマーはPhase 4（PHASE4-001 セクション2.9）で実装 -->
+- ジッター / シマー（Phase 4）
 - GitHub Actionsデプロイ設定（必要に応じて）
 
 ### 4.3 ユニットテスト
+
+<!-- REVIEW: テスト戦略レビューにて修正 — 境界値・エッジケース・数値安定性テストを追加、成功基準トレーサビリティを付与 -->
 
 #### KLアルゴリズム — 均一管の理論値照合
 - **テスト内容**: 全区間が同一断面積（4.0cm²）の均一管にインパルスを入力し、出力を検証
 - **期待値**: 均一管（長さL）の共鳴周波数は `f_n = (2n-1) * c / (4L)` (n=1,2,3,...) 。L=17.5cm, c=35000cm/s のとき、f1=500Hz, f2=1500Hz, f3=2500Hz
 - **検証方法**: 出力信号をFFTし、ピーク周波数が理論値と一致するか確認（許容誤差: +/-50Hz）
+- **成功基準カバレッジ**: → REQUIREMENTS.md 8項「声道断面積をドラッグで変更でき、リアルタイムに音が変化する」の物理モデル正当性検証
+
+#### KLアルゴリズム — 極端な断面積パターンでの安定性
+- **テスト内容**: 交互に最小/最大断面積（0.3/10.0 cm²）を設定した44区間で1秒分（44100サンプル）処理
+- **検証**: 出力にNaN/Infinityが含まれないこと、出力振幅がクリッピング閾値以内であること
+
+#### KLアルゴリズム — 長時間実行での数値発散チェック
+- **テスト内容**: 均一管で10秒分（441000サンプル）のprocess()連続実行
+- **検証**: 最終ブロックの出力RMS振幅が初期ブロックの10倍を超えないこと（発散していない）、NaN/Infinityが含まれないこと
 
 #### 反射係数計算
 - **テスト内容**: 既知の断面積ペアから反射係数を計算
@@ -459,6 +489,8 @@ Step 3:
   - A[k]=1.0, A[k+1]=9.0 → r=0.8
   - A[k]=9.0, A[k+1]=1.0 → r=-0.8
   - A[k]=0.3, A[k+1]=10.0 → r≈0.942 (極端な断面積比)
+  - A[k]=MIN_AREA(0.3), A[k+1]=MIN_AREA(0.3) → r=0 (境界値: 最小同士)
+  - A[k]=MAX_AREA(10.0), A[k+1]=MAX_AREA(10.0) → r=0 (境界値: 最大同士)
 - **検証**: |r| < 1 が常に成立すること
 
 #### スプライン補間
@@ -467,25 +499,58 @@ Step 3:
   - 全制御点が同一値(4.0) → 44区間すべてが4.0
   - 線形勾配（1.0〜10.0） → 補間結果が単調増加
   - 補間結果が MIN_AREA(0.3) 〜 MAX_AREA(10.0) の範囲内
+  - 全制御点がMIN_AREA(0.3) → 44区間すべてが0.3（境界値: 最小）
+  - 全制御点がMAX_AREA(10.0) → 44区間すべてが10.0（境界値: 最大）
 - **検証**: 制御点の位置では補間値が制御点値と一致すること
 
 #### 断面積下限クランプ
 - **テスト内容**: 断面積がMIN_AREA未満にならないことの確認
 - **テストケース**: 制御点を0に設定 → 補間結果が0.3以上であること
 
-### 4.4 E2Eテスト（手動確認チェックリスト）
+#### 簡易パルス音源の波形検証
+- **テスト内容**: 三角波パルス列の波形正確性
+- **テストケース**:
+  - phase=0.0 → output=0（開始点）
+  - phase=OQ/2 → output=1.0（ピーク）
+  - phase=OQ → output=0（開放相終了）
+  - phase=0.99 → output=0（閉鎖相）
+  - F0=50Hz（最低域）で1周期分の波形が正しく生成されること
+  - F0=400Hz（最高域）で1周期分の波形が正しく生成されること
 
+#### パフォーマンステスト — process()実行時間
+- **テスト内容**: 128サンプルのprocess()呼び出しにかかる時間を計測
+- **検証方法**: `performance.now()` でprocess()前後を計測、100回の平均値を算出
+- **基準値**: レンダリング予算 2.9ms の50%以下（< 1.45ms）であること
+- **テスト環境**: Node.js上の純粋計算モジュール単体テスト（AudioWorklet APIモック不要）
+- **成功基準カバレッジ**: → REQUIREMENTS.md 8項「低レイテンシに動作する」
+
+### 4.4 E2Eテスト
+
+<!-- REVIEW: テスト戦略レビューにて修正 — 自動化可能な項目と手動確認項目を分離、テストフレームワーク指針を追加 -->
+
+#### テストフレームワーク指針
+- **推奨**: Playwright（Chromium + Firefox + WebKit 対応、AudioContext の起動をユーザーインタラクションシミュレーションで実行可能）
+- **AudioWorklet のテスト**: Playwright の `page.evaluate()` 内で AudioContext を生成し、`OfflineAudioContext` を使った確定的テストも併用
+- **Canvas 操作**: Playwright の `page.mouse.move()` / `page.mouse.down()` / `page.mouse.up()` でドラッグ操作をシミュレート
+- **「音が出る」の自動検証方法**: AnalyserNode の `getFloatTimeDomainData()` で出力波形を取得し、RMS振幅がゼロでないことを検証（主観的な「音が出る」を客観的な振幅閾値に変換）
+
+#### 自動化可能なテスト（Playwright）
 - [ ] `npm run dev` でVite開発サーバーが起動する
 - [ ] ブラウザでページが表示される（Canvas + Start/Stopボタン）
-- [ ] Startボタンを押すと音が出る
-- [ ] 均一管の状態でブザー的な音が持続的に鳴る
-- [ ] 制御点をドラッグすると音色が変化する
-- [ ] 制御点を極端に変えると音色が大きく変わる（共鳴特性の変化が聞き取れる）
-- [ ] Stopボタンを押すと音が止まる
-- [ ] 再度Startを押すと再び音が出る
-- [ ] 長時間（30秒以上）鳴らしても音が途切れない（数値発散なし）
-- [ ] 制御点を高速にドラッグしてもクラッシュしない
+- [ ] Startボタンを押すと音声出力のRMS振幅 > 0.01 になる（= 音が出ている）
+- [ ] 均一管の状態で出力のRMS振幅が安定している（持続的に鳴っている）
+- [ ] Canvas上の制御点座標にmousedown→mousemove→mouseupを発行し、出力のスペクトル重心周波数が変化する（= 音色が変わった）
+- [ ] Stopボタンを押すと出力のRMS振幅 ≈ 0 になる（= 音が止まった）
+- [ ] 再度Startを押すとRMS振幅 > 0.01 になる
+- [ ] 10秒間連続でRMS振幅がNaN/Infinityにならない（数値安定性）
+- [ ] 制御点を高速にドラッグしてもページがクラッシュしない
 - [ ] `npm run build` でビルドが成功する
+- **成功基準カバレッジ**: → REQUIREMENTS.md 8項「声道断面積をドラッグで変更でき、リアルタイムに音が変化する」
+
+#### 手動確認チェックリスト（聴覚評価が必要な項目）
+- [ ] 均一管の状態でブザー的な音が持続的に鳴る（知覚確認）
+- [ ] 制御点を極端に変えると音色が大きく変わる（共鳴特性の変化が聞き取れる）
+- [ ] 操作から音の変化までの遅延が知覚できない程度である（< 20ms目標）
 
 ---
 
@@ -597,7 +662,8 @@ AudioWorkletの最大の制約は「process()内でGCを起こさない」こと
 
 **入れなくてよいもの: 過度な抽象化**
 
-Phase 1では音源インターフェースの抽象クラス / Strategy パターン等は不要。三角波パルスを直接実装し、Phase 2でKLGLOTT88に差し替えるときにインターフェースを抽出する方が、無駄な抽象層を避けられる。ただし、音源の `getSample(phase: number): number` という関数シグネチャだけは統一しておく（Phase 2の `GlottalSource` インターフェースとの整合性を確保）。
+<!-- REVIEW: Phase間整合性レビューにて修正 — メソッド名を `generate` に統一。Phase 2 セクション6.1 で「Phase 5 の `GlottalModel.generate()` と統一する（Phase 2 で `getSample` を導入すると Phase 5 で改名が必要になる）」と結論されているため、Phase 1 の段階から `generate` を使用する -->
+Phase 1では音源インターフェースの抽象クラス / Strategy パターン等は不要。三角波パルスを直接実装し、Phase 2でKLGLOTT88に差し替えるときにインターフェースを抽出する方が、無駄な抽象層を避けられる。ただし、音源の `generate(phase: number): number` という関数シグネチャだけは統一しておく（Phase 2の `GlottalModel` インターフェース、Phase 5の `GlottalModel.generate()` との整合性を確保）。
 
 ### 6.3 通信方式の設計
 
@@ -635,6 +701,27 @@ Phase 1 で最低限カバーすべきエラーケース:
 
 これらはコード量が少なく（各 5-10 行程度）、Phase 1 から入れておくべき。Phase 2 以降でデバッグ時間を大幅に節約できる。
 
+<!-- REVIEW: アーキテクチャレビューにて修正 — 全Phase共通のエラー回復パスとアプリ状態遷移を追記。 -->
+**全Phaseで一貫するアプリ状態遷移** (`engine.ts` で管理):
+
+```
+[Idle] --Start--> [Initializing] --成功--> [Running] --Stop--> [Idle]
+                       |                       |
+                   失敗(catch)         process()例外検知
+                       |                       |
+                       v                       v
+                   [Error]              [Error] (ソフトクリッピング + 警告)
+                       |                       |
+                       +------- Retry -------- +---> [Idle]
+```
+
+- **Idle**: AudioContext 未生成。Start ボタンのみ有効。
+- **Initializing**: AudioContext 生成 + addModule() + ノード接続中。ボタンは無効化。
+- **Running**: 正常動作中。全UI有効。Phase 4 の Auto Sing はこの状態でのみ有効化可能。
+- **Error**: AudioContext 生成失敗 / addModule() 失敗 / process() 例外。エラーメッセージ表示。Retryボタンで Idle に戻る（AudioContext を close() してから再生成）。
+
+**process() 内の例外対策**: AudioWorklet の process() で例外が発生した場合、ブラウザは通常そのノードを無効化する。対策として、process() のメインループ全体を try-catch で囲み、catch 内では出力バッファをゼロ埋めして `return true` を返す。これにより音は止まるがノードは生存し、パラメータ修正後に復帰可能。ただし process() 内の try-catch はパフォーマンスコストがあるため、開発ビルドのみで有効化し、プロダクションビルドでは `if (import.meta.env.DEV)` ガードで除去する選択肢も検討する。
+
 #### デバッグ容易性のための設計
 
 - **Worklet 内のログ出力**: AudioWorklet スレッドの `console.log` はブラウザの DevTools コンソールに表示されるが、大量のログは process() のパフォーマンスに影響する。開発時のみ有効化するフラグ（`DEBUG` 定数、または postMessage で制御するモード切替）を用意する。ただし process() 内の条件分岐は最小限にとどめる。
@@ -658,10 +745,12 @@ Phase 2（KLGLOTT88声門音源 + 母音プリセット）が依存するPhase 1
 
 #### 音源モジュールのインターフェース
 
+<!-- REVIEW: Phase間整合性レビューにて修正 — Phase 2 セクション6.1 の GlottalModel インターフェース（generate メソッド）と統一 -->
 ```typescript
 // Phase 1 の glottal-source.ts が公開する関数シグネチャ
 // Phase 2 でこのシグネチャを維持しつつ KLGLOTT88 に差し替える
-function generateGlottalSample(phase: number, params: GlottalParams): number;
+// Phase 2 で GlottalModel インターフェース { generate(phase): number; setParams(params): void; } に抽出予定
+function generate(phase: number): number;
 
 interface GlottalParams {
   // Phase 1: OQ のみ使用
@@ -674,13 +763,15 @@ interface GlottalParams {
 
 #### 断面積配列の通信プロトコル
 
+<!-- REVIEW: Phase間整合性レビューにて修正 — setSourceType の実装は Phase 2 で行う旨を明記。Phase 2 で追加されるメッセージ型を正確に記載 -->
 ```typescript
-// postMessage で送信するメッセージ型
+// postMessage で送信するメッセージ型（判別共用体型）
 type WorkletMessage =
   | { type: 'setAreas'; areas: number[] }          // 44要素
-  | { type: 'setSourceType'; sourceType: 'pulse' | 'noise' };
+  | { type: 'setSourceType'; sourceType: 'pulse' | 'noise' };  // Phase 1 で型定義、Phase 2 で実装
   // Phase 2 で追加予定:
   // | { type: 'setGlottalParams'; params: GlottalParams }
+  // | { type: 'setOQ'; oq: number }
 ```
 
 #### 母音プリセットのデータ構造

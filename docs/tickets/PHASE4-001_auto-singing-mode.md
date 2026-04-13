@@ -10,7 +10,8 @@
 
 ## 1. タスク目的とゴール
 
-自動的に母音とピッチを遷移させて「歌っている」ように聞こせるモードを実装する。
+<!-- REVIEW: プロジェクト管理レビューにて修正 — 誤字修正「聞こせる」→「聞こえさせる」 -->
+自動的に母音とピッチを遷移させて「歌っている」ように聞こえさせるモードを実装する。
 
 Phase 3 までに構築された声道合成パイプライン（44区間Kelly-Lochbaum + KLGLOTT88音源 + スペクトル/フォルマント表示 + F0制御）の上に、メロディ生成・母音遷移・表現パラメータ（ビブラート、ポルタメント、ジッター、シマー）・リズム/フレーズ構造を統合し、ユーザーが「Auto Sing」ボタンを押すだけで音楽的に自然な自動歌唱が鳴り続ける状態にする。
 
@@ -31,8 +32,9 @@ Phase 3 までに構築された声道合成パイプライン（44区間Kelly-L
 
 | 項目 | 仕様 |
 |------|------|
-| 補間方式 | コサイン補間 (`0.5 * (1 - cos(pi * t))`) |
-| 遷移時間 | 80-200ms（母音間のF1-F2ユークリッド距離に比例） |
+<!-- REVIEW: Phase間整合性レビューにて注記追加 — Phase 2 の TransitionManager（コサイン補間、transitionTo API）を再利用。遷移時間の動的計算のみ Phase 4 で追加 -->
+| 補間方式 | Phase 2 の TransitionManager を利用（コサイン補間 実装済み） |
+| 遷移時間 | 80-200ms（母音間のF1-F2距離に比例）— `TransitionManager.transitionTo(id, durationMs)` で指定 |
 | 対象 | 16制御点の断面積値を母音プリセット間で補間 |
 | 母音選択 | 5母音（あいうえお）からランダム選択（連続同母音を回避） |
 
@@ -44,7 +46,10 @@ max_distance = sqrt((800-300)^2 + (2300-800)^2)  // /a/→/i/ 間の距離
 transition_ms = 80 + (200 - 80) * (distance / max_distance)
 ```
 
-補間中は16制御点の断面積を個別にコサイン補間し、毎フレーム44区間へスプライン補間してpostMessageで送信する。
+補間中は16制御点の断面積を個別にコサイン補間し、44区間へスプライン補間してpostMessageで送信する。
+
+<!-- REVIEW: アーキテクチャレビューにて修正 — 母音遷移中の postMessage 送信頻度とボトルネックリスクを明記。 -->
+**postMessage 送信頻度の制御**: 母音遷移中、rAF (60fps) ごとに断面積配列 (Float64Array(44) = 352bytes) を postMessage で送信する。構造化クローンのコストは微小だが、Phase 5 のパフォーマンス最適化セクションで定義された throttle (最大60回/秒) と整合させる。遷移が完了した（断面積が変化していない）フレームでは送信をスキップする dirty フラグチェックを実装すること。これにより、遷移完了後の不要な postMessage を排除する。
 
 ### 2.2 ピッチ生成
 
@@ -208,6 +213,13 @@ amplitude_shimmered = amplitude * (1 + shimmer_amount * (Math.random() * 2 - 1))
 
 Auto Sing中も手動のピッチスライダーは無効化せず、Autoの基準F0として機能する。
 
+<!-- REVIEW: アーキテクチャレビューにて修正 — Auto Sing 中の手動操作との競合解決ルールを明示。 -->
+**Auto Sing中の手動操作との競合解決ルール**:
+- **ピッチスライダー**: Auto Sing はスライダーの値を基準F0とし、メロディの音程差を加算する。スライダー操作は即座に反映される（競合なし、合算方式）。
+- **声道ドラッグ**: Auto Sing 中は制御点のドラッグを **無効化する**。理由: Auto Singer が母音遷移で断面積配列を毎フレーム上書きするため、手動操作の結果が即座に上書きされてユーザーの操作感が破綻する。Canvas上の制御点はAuto遷移に連動してアニメーションするが、ドラッグ不可の視覚的フィードバック（カーソル変更、制御点の色変更等）を提供する。
+- **母音プリセットボタン**: Auto Sing 中は無効化する（Auto Singer が母音選択を管理するため）。
+- **Auto Sing 停止時**: 最後にAutoが設定した断面積配列をそのまま保持し、手動操作可能状態に復帰する。
+
 ---
 
 ## 3. 実装に必要なエージェントチームの役割と人数
@@ -237,11 +249,12 @@ interface MelodyEvent {
 
 **担当ファイル**: `src/ui/auto-singer/vowel-sequencer.ts`
 
+<!-- REVIEW: Phase間整合性レビューにて修正 — Phase 2 セクション7.3 で TransitionManager API（transitionTo/transitionToCustom/isTransitioning/getCurrentControlPoints）が Phase 4 向けに公開されている。vowel-sequencer はコサイン補間を再実装するのではなく、Phase 2 の TransitionManager を利用すべき -->
 **責務**:
 - 次の母音をランダム選択（連続同母音回避）
 - F1-F2距離に基づく遷移時間の計算
-- 16制御点のコサイン補間実行
-- 補間中の断面積配列を毎フレーム生成
+- Phase 2 の `TransitionManager.transitionTo(targetPresetId, durationMs)` を呼び出して母音遷移を実行
+- `TransitionManager.isTransitioning()` で遷移完了を監視
 
 **出力インターフェース**:
 ```typescript
@@ -333,33 +346,69 @@ interface PhraseState {
 
 **統合コーディネータ (`index.ts`) の責務**:
 
+<!-- REVIEW: アーキテクチャレビューにて修正 — タイミング管理を lookahead scheduling 方式に変更。
+rAF のみでは 16.7ms 精度であり、16分音符@200BPM=75ms に対して約 22% のジッターが生じる。
+また rAF はバックグラウンドタブで停止するため、タブ切替時に暴走・大量イベント一括発火のリスクがある。
+Chris Wilson "A Tale of Two Clocks" パターンに基づき、以下の 2 系統構成に変更:
+  1. setInterval(25ms) + AudioContext.currentTime ベースの lookahead (100ms先まで) でノートイベントをスケジュール
+  2. rAF は描画更新（母音補間アニメーション、Canvas同期）のみに使用
+F0 のポルタメント/ビブラートは AudioParam.setValueAtTime / linearRampToValueAtTime を
+lookahead 窓内で発行し、メインスレッドのタイミングジッターの影響を受けないようにする。 -->
+
 ```typescript
-// 自動歌唱ループの疑似コード
-function autoSingLoop(timestamp: number) {
+// 自動歌唱ループ: 2系統構成の疑似コード
+
+// 系統1: タイミングスケジューラ (setInterval 25ms)
+// ノートイベントの発行とAudioParam操作を担当
+const LOOKAHEAD_SEC = 0.1;  // 100ms先までスケジュール
+const INTERVAL_MS = 25;
+
+function schedulerTick() {
+  if (!isAutoSingActive) return;
+  const currentTime = audioContext.currentTime;
+  const scheduleUntil = currentTime + LOOKAHEAD_SEC;
+
+  while (nextNoteTime < scheduleUntil) {
+    const phraseState = phraseManager.update(nextNoteTime);
+
+    if (phraseState.isResting) {
+      applyBreath(phraseState, nextNoteTime);
+    } else {
+      const rhythm = rhythmEngine.nextNote(bpm);
+      const melody = melodyGenerator.nextNote(phraseState);
+      const vowel = vowelSequencer.nextVowel();
+
+      // AudioParam に正確なタイムスタンプでスケジュール
+      scheduleNote(melody, rhythm, vowel, nextNoteTime);
+    }
+
+    nextNoteTime += rhythm.durationMs / 1000;
+  }
+}
+
+let schedulerInterval: number | null = null;
+function startScheduler() {
+  schedulerInterval = setInterval(schedulerTick, INTERVAL_MS);
+}
+function stopScheduler() {
+  if (schedulerInterval !== null) clearInterval(schedulerInterval);
+  schedulerInterval = null;
+}
+
+// 系統2: 描画更新 (rAF)
+// 母音補間アニメーション、Canvas同期を担当
+function renderLoop(timestamp: number) {
   if (!isAutoSingActive) return;
 
-  const phraseState = phraseManager.update(deltaTime);
-
-  if (phraseState.isResting) {
-    // 休符/ブレス処理
-    applyBreath(phraseState.breathProgress);
-  } else if (isNoteOnsetTime()) {
-    // 新しいノートの開始
-    const rhythm = rhythmEngine.nextNote(bpm);
-    const melody = melodyGenerator.nextNote(phraseState);
-    const vowel = vowelSequencer.nextVowel();
-
-    scheduleNote(melody, rhythm, vowel);
-  }
-
-  // 継続的な更新
   const expression = expressionEngine.update(deltaTime, currentNote);
   applyExpression(expression);
   vowelSequencer.updateInterpolation(deltaTime);
 
-  requestAnimationFrame(autoSingLoop);
+  requestAnimationFrame(renderLoop);
 }
 ```
+
+> **注意**: `scheduleNote()` 内で F0 のポルタメント/ビブラートは `AudioParam.linearRampToValueAtTime(value, nextNoteTime)` で発行する。断面積配列の postMessage はスケジュール時刻と紐付けて送信し、AudioWorklet 側で `currentTime` に基づいてバッファ切替を行う。
 
 ---
 
@@ -390,6 +439,12 @@ function autoSingLoop(timestamp: number) {
 
 ### 4.3 ユニットテスト
 
+<!-- REVIEW: テスト戦略レビューにて修正 — 乱数シード固定テスト方針・BPM境界値テスト・ポルタメント計算テスト・ADSR値域テスト・パフォーマンステストを追加、成功基準トレーサビリティを付与 -->
+
+#### テスト方針: 確率的モジュールの決定的テスト
+- 乱数を使用するモジュール（マルコフ連鎖、リズム、ポルタメント確率）は、乱数生成器を注入可能な設計（Dependency Injection）にし、テスト時はシード固定の擬似乱数を使用して再現性を確保する
+- 統計的テスト（出現頻度、確率分布）は十分な試行回数（1000回以上）で検証
+
 #### マルコフ連鎖の制約テスト
 
 ```
@@ -399,6 +454,8 @@ function autoSingLoop(timestamp: number) {
 - [ ] フレーズ末フラグが立った状態で生成される音がルートまたは5度音である
 - [ ] 遷移確率の合計が1.0になる（正規化の検証）
 - [ ] 1000回生成して各音高の出現頻度が偏りすぎない（カイ二乗検定的な確認）
+- [ ] 全ての遷移確率が0.0以上1.0以下であること（境界値）
+- [ ] 遷移確率テーブルの行和が1.0±1e-10であること
 ```
 
 #### コサイン補間の値域テスト
@@ -427,6 +484,18 @@ function autoSingLoop(timestamp: number) {
 - [ ] 音符長確率分布が指定通り（8分40%/4分30%/付点8分15%/16分10%/2分5%）
 - [ ] BPM変更時に音符の実時間長が正しく変化する
 - [ ] マイクロタイミング揺らぎが+-15ms以内
+- [ ] BPM=40（最小値）で音符の実時間長が正しいこと（4分音符=1500ms）
+- [ ] BPM=200（最大値）で音符の実時間長が正しいこと（4分音符=300ms）
+- [ ] BPMを0以下に設定した場合のガード処理（クランプまたはエラー）
+```
+
+#### ポルタメントのテスト
+
+```
+- [ ] ポルタメント時間が50-200msの範囲内であること
+- [ ] 半音距離に比例してポルタメント時間が増加すること
+- [ ] ポルタメント中のF0が対数空間で補間されていること（知覚的に均一）
+- [ ] 適用確率が60-70%付近であること（1000回試行で統計的に検証）
 ```
 
 #### フレーズ構造のテスト
@@ -436,24 +505,54 @@ function autoSingLoop(timestamp: number) {
 - [ ] フレーズ間に0.5-1拍の休符が挿入される
 - [ ] ADSR各段階の時間が仕様範囲内
 - [ ] フレーズアーチカーブの最大値が0.6-0.7地点付近にある
+- [ ] ADSRエンベロープの出力が常に0.0-1.0の範囲内であること（境界値）
+- [ ] ノート単位ADSRとフレーズ単位カーブの乗算結果が0.0-1.0の範囲内であること
+```
+
+#### パフォーマンステスト — メインスレッド負荷
+
+```
+- [ ] 自動歌唱ループ1フレームの計算時間がp95で2ms以下であること
+      （母音補間 + メロディ生成 + リズム計算 + ビブラート + ポルタメント + ADSR + スプライン補間）
+- [ ] 16.7ms（60fps予算）内に描画更新 + パラメータ送信が完了すること
+成功基準カバレッジ: → REQUIREMENTS.md 8項「低レイテンシに動作する」
 ```
 
 ### 4.4 E2Eテスト
 
+<!-- REVIEW: テスト戦略レビューにて修正 — 自動化可能/手動確認の分離、「歌っているように聞こえる」の客観的検証方法を追記、リグレッションチェック追加 -->
+
+#### テスト自動化方針
+- **「歌っている」の客観的検証**: F0の時系列データを記録し、(1)ペンタトニック音階上の離散的な値に近い定常区間がある、(2)定常区間間にポルタメント的な連続変化区間がある、(3)定常区間内にビブラート的な周期変動がある、を数値的に検証する。「歌っているように聞こえる」を「音楽的パラメータが仕様通り動作している」に分解する
+- **断面積配列の時間変化**: page.evaluate() 内で postMessage の送信内容をフック/記録し、断面積配列が5母音のプリセットパターンの間で遷移していることを検証
+
+#### 自動化可能なテスト（Playwright）
 ```
-- [ ] Auto Singボタンを押す → 母音が自動遷移し始める（断面積配列が時間経過で変化）
-- [ ] Auto Sing中 → ピッチが変化している（F0の値が時間経過で変化）
-- [ ] Auto Sing中 → ビブラートが聞こえる（F0の微小周期変動がある）
-- [ ] 速度スライダーを変更 → ノートの切替速度が変化する
-- [ ] 速度スライダーを最低（40BPM）にする → ゆっくりと歌う
-- [ ] 速度スライダーを最高（200BPM）にする → 速く歌う
-- [ ] Auto Sing中に手動でピッチスライダーを操作 → 基準F0が変わり自動歌唱の音域が移動する
-- [ ] Auto Singボタンをオフにする → 即座に自動遷移が停止する
-- [ ] Auto Sing停止後 → 手動での声道操作が正常に機能する
-- [ ] Auto Sing中 → フレーズ間で無音区間（ブレス）がある
-- [ ] Auto Sing中 → スペクトル表示が自動遷移に追従している
+- [ ] Auto Singボタンを押す → 3秒間でF0の値が複数回変化する（page.evaluate内でAudioParamの値を定期取得）
+- [ ] Auto Sing中 → F0の定常区間値がペンタトニック音階の周波数に近い（±5%以内）
+- [ ] Auto Sing中 → F0にビブラート的な周期変動がある（FFTで5-6Hz付近にピーク）
+- [ ] 速度スライダーをpage.fill()で40BPMに設定 → ノート間隔が1秒以上
+- [ ] 速度スライダーをpage.fill()で200BPMに設定 → ノート間隔が0.3秒以下
+- [ ] Auto Singボタンをオフにする → F0の変化が停止する
+- [ ] Auto Sing停止後 → 母音プリセットボタンのクリックが正常に機能する
 - [ ] Start/Stop → Auto Sing → Start/Stop の順で操作してもクラッシュしない
+- [ ] Auto Sing 30秒間連続動作でメモリ使用量が単調増加しないこと（GCリークなし）
 ```
+- **成功基準カバレッジ**: → REQUIREMENTS.md 8項「自動モードで母音とピッチがランダムに遷移し『歌っている』ように聞こえる」
+
+#### 手動確認チェックリスト（聴覚・主観評価が必要な項目）
+```
+- [ ] Auto Sing中 → ビブラートが聞こえる（知覚確認）
+- [ ] Auto Sing中 → フレーズ間で自然な休符（ブレス）が聞こえる
+- [ ] Auto Sing中 → スペクトル表示が自動遷移に追従している（視覚確認）
+- [ ] 全体として「歌っている」ように聞こえる（30秒以上の連続再生で評価）
+- [ ] メロディが単調すぎないか、無秩序すぎないかの主観評価
+```
+
+#### Phase 1-3 リグレッションチェック
+- **Phase 1-3 の全ユニットテストがPhase 4コード統合後もパスすること**
+- **Auto Sing OFF状態での手動操作（ドラッグ、プリセット、F0スライダー）がPhase 3と同等に機能すること**
+- **スペクトル表示・フォルマント計算がAutoモード中も正常に動作すること**
 
 ---
 
@@ -463,15 +562,17 @@ function autoSingLoop(timestamp: number) {
 
 **懸念**: 自動歌唱のタイミング制御にrequestAnimationFrame（rAF）を使う場合、16.7ms（60fps）の精度であり、16分音符 @ 200BPM = 75msに対して約22%の誤差が生じうる。またタブがバックグラウンドに回るとrAFが停止する。
 
-**対策案**:
-- rAFで描画更新、setInterval (5-10ms間隔) でタイミングイベント管理の2系統構成
-- もしくはrAFのtimestampを使った差分積算方式で、フレーム間隔のばらつきを吸収する
-- バックグラウンドタブ問題は「Auto Singはフォアグラウンドタブでのみ動作」と割り切る
+<!-- REVIEW: アーキテクチャレビューにて修正 — 対策を「案」から確定設計に昇格。セクション3.6の疑似コードと整合。 -->
+**確定設計: lookahead scheduling (2系統構成)**:
+- **系統1 (タイミング)**: `setInterval(25ms)` + `AudioContext.currentTime` ベースの lookahead (100ms先まで) でノートイベントをスケジュール。F0 のポルタメント/ビブラートは `AudioParam.setValueAtTime` / `linearRampToValueAtTime` を lookahead 窓内で発行し、メインスレッドのジッターを吸収する。
+- **系統2 (描画)**: `requestAnimationFrame` は描画更新（母音補間アニメーション、Canvas同期）のみに使用。
+- **バックグラウンドタブ**: rAF は停止するが setInterval はスロットリングされる（Chrome では最低 1 秒間隔）。タブ復帰時にスケジューラが一括でイベントを発行しないよう、`nextNoteTime < currentTime` の場合はスキップして現在時刻にリセットする。
 
 **レビュー項目**:
 - [ ] タイミングのジッターが音楽的に許容範囲か（録音して波形確認）
-- [ ] setInterval使用時のGC影響
-- [ ] バックグラウンドタブでの挙動が安全か（停止するか暴走するか）
+- [ ] setInterval のコールバック内でオブジェクト生成を最小化しているか
+- [ ] バックグラウンドタブからの復帰時に nextNoteTime のリセットが正しく動作するか
+- [ ] lookahead 窓 (100ms) が postMessage のレイテンシ (~3ms) に対して十分か
 
 ### 5.2 音楽的な自然さ
 
