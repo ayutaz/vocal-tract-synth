@@ -11,7 +11,7 @@
 // - error         : Retry ボタン、エラーメッセージ表示
 // ============================================================================
 
-import type { AppState } from '../types/index';
+import type { AppState, VowelId } from '../types/index';
 
 // ============================================================================
 // Controls クラス
@@ -142,4 +142,87 @@ export class Controls {
     this.errorText.textContent = '';
     this.errorText.hidden = true;
   }
+}
+
+// ============================================================================
+// プリセットボタン・Noiseトグル (PresetControls)
+// ----------------------------------------------------------------------------
+// 母音プリセットボタン（あ/い/う/え/お/Flat）の選択と、
+// Noise ボタンのトグル操作を管理する。
+// ============================================================================
+
+export class PresetControls {
+  private readonly presetContainer: HTMLElement;
+  private readonly noiseBtn: HTMLButtonElement;
+  private readonly onPresetSelect: (id: VowelId) => void;
+  private readonly onNoiseToggle: (isNoise: boolean) => void;
+
+  private readonly presetButtons: HTMLButtonElement[];
+  private isNoise = false;
+
+  constructor(
+    presetContainer: HTMLElement,
+    noiseBtn: HTMLButtonElement,
+    onPresetSelect: (id: VowelId) => void,
+    onNoiseToggle: (isNoise: boolean) => void,
+  ) {
+    this.presetContainer = presetContainer;
+    this.noiseBtn = noiseBtn;
+    this.onPresetSelect = onPresetSelect;
+    this.onNoiseToggle = onNoiseToggle;
+
+    // プリセットボタンを収集
+    this.presetButtons = Array.from(
+      this.presetContainer.querySelectorAll<HTMLButtonElement>('.preset-btn'),
+    );
+
+    // イベント登録
+    this.presetContainer.addEventListener('click', this.handlePresetClick);
+    this.noiseBtn.addEventListener('click', this.handleNoiseClick);
+  }
+
+  // ==========================================================================
+  // 公開 API
+  // ==========================================================================
+
+  /** 選択中のプリセットをハイライトする。null で全解除。 */
+  setActivePreset(id: VowelId | null): void {
+    for (const btn of this.presetButtons) {
+      const vowel = btn.dataset['vowel'] as VowelId | undefined;
+      btn.classList.toggle('active', vowel === id);
+    }
+  }
+
+  /** ノイズ状態を更新する。 */
+  setNoiseActive(active: boolean): void {
+    this.isNoise = active;
+    this.noiseBtn.classList.toggle('active', active);
+  }
+
+  /** リソース解放（イベント解除） */
+  destroy(): void {
+    this.presetContainer.removeEventListener('click', this.handlePresetClick);
+    this.noiseBtn.removeEventListener('click', this.handleNoiseClick);
+  }
+
+  // ==========================================================================
+  // 内部
+  // ==========================================================================
+
+  private handlePresetClick = (e: Event): void => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains('preset-btn')) return;
+
+    const vowelId = target.dataset['vowel'] as VowelId | undefined;
+    if (vowelId == null) return;
+
+    this.setActivePreset(vowelId);
+    this.onPresetSelect(vowelId);
+  };
+
+  private handleNoiseClick = (): void => {
+    this.isNoise = !this.isNoise;
+    this.noiseBtn.classList.toggle('active', this.isNoise);
+    this.onNoiseToggle(this.isNoise);
+  };
 }

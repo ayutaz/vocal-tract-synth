@@ -10,7 +10,7 @@
 // Phase 3 では GainNode と destination の間に AnalyserNode を挿入する。
 // ============================================================================
 
-import type { WorkletMessage } from '../types/index';
+import type { WorkletMessage, SourceType } from '../types/index';
 import { SAMPLE_RATE, DEFAULT_F0 } from '../types/index';
 // Vite の `?worker&url` サフィックスにより、worklet-processor.ts は JavaScript に
 // トランスパイル＆バンドルされ、その最終ファイルの URL が import される。
@@ -136,6 +136,24 @@ export class AudioEngine {
   setFrequency(hz: number): void {
     if (this.frequencyParam === null || this.audioContext === null) return;
     this.frequencyParam.setValueAtTime(hz, this.audioContext.currentTime);
+  }
+
+  /**
+   * 音源タイプ（有声/無声）を切り替える。Worklet側でクロスフェードが行われる。
+   */
+  setSourceType(type: SourceType): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setSourceType', sourceType: type };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * Open Quotient を設定する。
+   */
+  setOQ(oq: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setOQ', oq };
+    this.workletNode.port.postMessage(msg);
   }
 
   /**

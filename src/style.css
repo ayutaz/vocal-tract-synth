@@ -80,3 +80,60 @@ h1 {
   color: #ff6b6b;
   font-size: 0.85rem;
 }
+
+/* ===== プリセットボタン ===== */
+
+#presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0;
+}
+
+.preset-btn {
+  padding: 6px 14px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  border: 1px solid #334;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #16213e;
+  color: #a0c4ff;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.preset-btn:hover {
+  background: #1f2f50;
+  border-color: #4cc9f0;
+}
+
+.preset-btn.active {
+  background: #4cc9f0;
+  color: #1a1a2e;
+  border-color: #4cc9f0;
+}
+
+#noise-btn {
+  padding: 6px 14px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  border: 1px solid #334;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #16213e;
+  color: #ff9e6b;
+  margin-left: auto;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+#noise-btn:hover {
+  background: #1f2f50;
+  border-color: #ff9e6b;
+}
+
+#noise-btn.active {
+  background: #ff6b6b;
+  color: #1a1a2e;
+  border-color: #ff6b6b;
+}

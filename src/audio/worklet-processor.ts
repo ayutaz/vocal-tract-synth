@@ -45,7 +45,7 @@ declare function registerProcessor(
 
 // ===== 実装 =====
 
-import { GlottalSource } from '../models/glottal-source.js';
+import { Klglott88Source } from '../models/glottal-source.js';
 import { VocalTract } from '../models/vocal-tract.js';
 import {
   VOCAL_TRACT_PARAMETER_DESCRIPTORS,
@@ -55,8 +55,8 @@ import { NUM_SECTIONS, DEFAULT_F0 } from '../types/index.js';
 import type { WorkletMessage } from '../types/index.js';
 
 class VocalTractProcessor extends AudioWorkletProcessor {
-  // 声門音源 (三角波パルス) と声道フィルタ (Kelly-Lochbaum)
-  private glottalSource: GlottalSource;
+  // 声門音源 (KLGLOTT88) と声道フィルタ (Kelly-Lochbaum)
+  private glottalSource: Klglott88Source;
   private vocalTract: VocalTract;
 
   // 位相アキュムレータ (声門音源の位相 [0, 1))
@@ -70,7 +70,7 @@ class VocalTractProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
-    this.glottalSource = new GlottalSource();
+    this.glottalSource = new Klglott88Source();
     this.vocalTract = new VocalTract();
 
     // メインスレッドからの断面積 / 音源切替メッセージを受信
@@ -83,8 +83,11 @@ class VocalTractProcessor extends AudioWorkletProcessor {
           this.vocalTract.setAreas(msg.areas);
         }
       } else if (msg.type === 'setSourceType') {
-        // Phase 1 では pulse のみサポート。noise は Phase 2 以降で実装するため、
-        // ここでは将来拡張用にメッセージを受け取っておく (現時点では何もしない)。
+        // 有声/無声の切り替え (CROSSFADE_SAMPLES かけてクロスフェード)
+        this.glottalSource.setSourceType(msg.sourceType);
+      } else if (msg.type === 'setOQ') {
+        // Open Quotient の更新
+        this.glottalSource.setOpenQuotient(msg.oq);
       }
     };
   }
@@ -123,8 +126,8 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         phase -= 1.0;
       }
 
-      // 声門音源 → 声道フィルタ
-      const glottalSample = this.glottalSource.generate(phase);
+      // 声門音源 (KLGLOTT88 + 有声/無声ミキシング) → 声道フィルタ
+      const glottalSample = this.glottalSource.generateWithMix(phase);
       const sample = this.vocalTract.processSample(glottalSample);
 
       outputChannel[i] = sample;

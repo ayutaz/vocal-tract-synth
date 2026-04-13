@@ -17,6 +17,8 @@ export const DEFAULT_F0 = 120;        // Hz
 export const MIN_F0 = 50;             // Hz
 export const MAX_F0 = 400;            // Hz
 export const DEFAULT_OQ = 0.6;        // Open Quotient
+export const MIN_OQ = 0.3;
+export const MAX_OQ = 0.8;
 
 // ===== 声道フィルタパラメータ =====
 
@@ -25,37 +27,50 @@ export const GLOTTAL_REFLECTION = 0.95;    // 声門端反射係数 r_glottis
 export const LIP_REFLECTION = -0.85;       // 唇端反射係数 R_L
 export const RADIATION_ALPHA = 0.97;       // 放射フィルタ係数 alpha
 
+// ===== 有声/無声クロスフェード =====
+
+export const CROSSFADE_SAMPLES = 330;      // 約7.5ms at 44100Hz（5-10ms範囲内）
+
 // ===== アプリケーション状態 =====
 
 export type AppState = 'idle' | 'initializing' | 'running' | 'error';
+
+// ===== 音源タイプ =====
+
+export type SourceType = 'voiced' | 'noise';
 
 // ===== メインスレッド → Worklet 通信メッセージ型（判別共用体） =====
 
 export type WorkletMessage =
   | { type: 'setAreas'; areas: ArrayLike<number> }
-  | { type: 'setSourceType'; sourceType: 'pulse' | 'noise' };
-  // Phase 2 で追加: { type: 'setOQ'; oq: number }
+  | { type: 'setSourceType'; sourceType: SourceType }
+  | { type: 'setOQ'; oq: number };
   // Phase 4 で追加: { type: 'setJitter'; amount: number }
   // Phase 4 で追加: { type: 'setShimmer'; amount: number }
   // Phase 5 で追加: { type: 'setGlottalModel'; model: 'klglott88' | 'lf' }
   // Phase 5 で追加: { type: 'setRd'; rd: number }
   // Phase 5 で追加: { type: 'setAspiration'; level: number }
 
-// ===== 母音プリセット型（Phase 2 で実データ投入） =====
+// ===== 声門音源インターフェース（Phase 2 で抽出） =====
 
-export interface VowelPreset {
-  name: string;           // 'a', 'i', 'u', 'e', 'o'
-  label: string;          // 'あ', 'い', 'う', 'え', 'お'
-  controlPoints: number[];  // 16要素 (cm²)
+export interface GlottalModel {
+  generate(phase: number): number;
+  reset(): void;
 }
 
-// ===== 声門パラメータ =====
+// ===== 母音プリセット型 =====
 
-export interface GlottalParams {
-  openQuotient: number;   // 0.0〜1.0, デフォルト 0.6
-  // Phase 2 で追加予定:
-  // speedQuotient: number;
-  // amplitude: number;
+export type VowelId = 'a' | 'i' | 'u' | 'e' | 'o' | 'neutral';
+
+export interface VowelPreset {
+  id: VowelId;
+  label: string;            // 'あ', 'い', 'う', 'え', 'お', 'Flat'
+  controlPoints: number[];  // 16要素 (cm²)
+  targetFormants?: {        // Phase 3 チューニング検証用
+    f1: number;
+    f2: number;
+    f3: number;
+  };
 }
 
 // ===== UI コールバック型 =====
