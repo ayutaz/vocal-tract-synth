@@ -32,7 +32,7 @@ export type AppState = 'idle' | 'initializing' | 'running' | 'error';
 // ===== メインスレッド → Worklet 通信メッセージ型（判別共用体） =====
 
 export type WorkletMessage =
-  | { type: 'setAreas'; areas: number[] }
+  | { type: 'setAreas'; areas: ArrayLike<number> }
   | { type: 'setSourceType'; sourceType: 'pulse' | 'noise' };
   // Phase 2 で追加: { type: 'setOQ'; oq: number }
   // Phase 4 で追加: { type: 'setJitter'; amount: number }

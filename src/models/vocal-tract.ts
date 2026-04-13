@@ -112,8 +112,8 @@ export class VocalTract {
       // 散乱 / 境界条件の計算では現時刻の値を参照するため、in-place 更新が誤作動しないよう
       // f, b の旧値を別バッファに保持する。
       for (let k = 0; k < N; k++) {
-        sf[k] = f[k];
-        sb[k] = b[k];
+        sf[k] = f[k]!;
+        sb[k] = b[k]!;
       }
 
       // ---- 2. 散乱ループ (境界 k = 0, ..., N-2) ----
@@ -123,43 +123,43 @@ export class VocalTract {
       //   b[k+1]  = sb[k]   + delta
       // 均一管では r[k]=0 なので f[k] = sf[k+1], b[k+1] = sb[k] の純粋な遅延となる。
       for (let k = 0; k < N - 1; k++) {
-        const delta = r[k] * (sf[k + 1] - sb[k]);
-        f[k] = sf[k + 1] + delta;
-        b[k + 1] = sb[k] + delta;
+        const delta = r[k]! * (sf[k + 1]! - sb[k]!);
+        f[k] = sf[k + 1]! + delta;
+        b[k + 1] = sb[k]! + delta;
       }
 
       // ---- 3. 声門端境界条件 (区間 N-1 側) ----
       // 声門から新規入射される波と、声門端反射による b[N-1] の跳ね返りを合成。
       // 散乱ループでは f[N-1] は書かれない (k+1 <= N-1 ⇒ k <= N-2) ので、
       // ここで唯一の書き込みとなる。
-      f[N - 1] = glottalSample + GLOTTAL_REFLECTION * sb[N - 1];
+      f[N - 1] = glottalSample + GLOTTAL_REFLECTION * sb[N - 1]!;
 
       // ---- 4. 唇端境界条件 (区間 0 側) ----
       // 唇端での反射 (放射インピーダンスにより負の反射係数)。
       // 声門端と同じく「前時刻の端点値」を反射するため、旧値 sf[0] を使う。
       // 散乱ループでは b[0] は書かれないので、ここが唯一の書き込みとなる。
-      b[0] = LIP_REFLECTION * sf[0];
+      b[0] = LIP_REFLECTION * sf[0]!;
     }
 
     // ---- 5. 壁面損失 (1 サンプルにつき 1 回、全区間) ----
     const mu = WALL_LOSS_FACTOR;
     for (let k = 0; k < N; k++) {
-      f[k] *= mu;
-      b[k] *= mu;
+      f[k] = f[k]! * mu;
+      b[k] = b[k]! * mu;
     }
 
     // ---- 6. ソフトクリッピング (数値発散防止) ----
     // 通常動作では発動しないが、パラメータ変化による過渡で発振する場合に備えた保険。
     for (let k = 0; k < N; k++) {
-      if (f[k] > SOFT_CLIP_THRESHOLD) f[k] = SOFT_CLIP_THRESHOLD;
-      else if (f[k] < -SOFT_CLIP_THRESHOLD) f[k] = -SOFT_CLIP_THRESHOLD;
-      if (b[k] > SOFT_CLIP_THRESHOLD) b[k] = SOFT_CLIP_THRESHOLD;
-      else if (b[k] < -SOFT_CLIP_THRESHOLD) b[k] = -SOFT_CLIP_THRESHOLD;
+      if (f[k]! > SOFT_CLIP_THRESHOLD) f[k] = SOFT_CLIP_THRESHOLD;
+      else if (f[k]! < -SOFT_CLIP_THRESHOLD) f[k] = -SOFT_CLIP_THRESHOLD;
+      if (b[k]! > SOFT_CLIP_THRESHOLD) b[k] = SOFT_CLIP_THRESHOLD;
+      else if (b[k]! < -SOFT_CLIP_THRESHOLD) b[k] = -SOFT_CLIP_THRESHOLD;
     }
 
     // ---- 7. 放射フィルタ (1 次差分 HPF) ----
     //   output = f[0] - alpha * prev_f0
-    const currentLipInput = f[0];
+    const currentLipInput = f[0]!;
     const output = currentLipInput - RADIATION_ALPHA * this.prevLipInput;
     this.prevLipInput = currentLipInput;
 
@@ -172,11 +172,12 @@ export class VocalTract {
    *
    * @param newAreas 長さ NUM_SECTIONS の断面積配列
    */
-  setAreas(newAreas: Float64Array | number[]): void {
+  setAreas(newAreas: ArrayLike<number>): void {
     const N = this.n;
     const len = newAreas.length < N ? newAreas.length : N;
     for (let i = 0; i < len; i++) {
       let a = newAreas[i];
+      if (a === undefined) continue;
       if (a < MIN_AREA) a = MIN_AREA;
       this.areas[i] = a;
     }
@@ -197,8 +198,8 @@ export class VocalTract {
     const r = this.reflectionCoefficients;
     const N = this.n;
     for (let k = 0; k < N - 1; k++) {
-      const sum = A[k + 1] + A[k];
-      const diff = A[k + 1] - A[k];
+      const sum = A[k + 1]! + A[k]!;
+      const diff = A[k + 1]! - A[k]!;
       r[k] = diff / sum;
     }
   }

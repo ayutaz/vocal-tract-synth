@@ -124,12 +124,8 @@ export class AudioEngine {
   sendAreas(areas: Readonly<Float64Array>): void {
     if (this.workletNode === null) return;
 
-    // postMessage は構造化クローンされるため、生配列を JS 配列に変換しておく
-    // （Float64Array でも送れるが、一度 Array に変換してプロトコル型と整合させる）
-    const msg: WorkletMessage = {
-      type: 'setAreas',
-      areas: Array.from(areas),
-    };
+    // Float64Array を構造化クローンで直接送信（Array.from を避けて GC 圧力を削減）
+    const msg: WorkletMessage = { type: 'setAreas', areas };
     this.workletNode.port.postMessage(msg);
   }
 

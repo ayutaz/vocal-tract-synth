@@ -112,10 +112,49 @@ describe('TractEditor - スプライン補間', () => {
       cp[NUM_CONTROL_POINTS - 1]!,
       6,
     );
-    // 内部点については、スプラインが制御点 xs[i] を通ることを確認する
-    // （区間中心の整数 k=0..43 とは一致しないため、手動で評価する必要がある）
-    // ここでは端点のみ検証。
     expect(xs[0]).toBe(0);
     expect(xs[NUM_CONTROL_POINTS - 1]).toBeCloseTo(NUM_SECTIONS - 1, 6);
+  });
+
+  it('スプラインが全制御点を通過する（内部点含む）', () => {
+    // スプラインの最も重要な不変条件: S(xs[i]) = ys[i] for all i
+    // evaluateSplineAtSections は整数格子上でしか評価しないため、
+    // 制御点位置 xs[i] が非整数になる場合は直接スプライン式で評価する。
+    const cp = new Float64Array(NUM_CONTROL_POINTS);
+    for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
+      cp[i] = 1.5 + (i * 7) % 8; // 1.5〜9.5 の範囲
+    }
+    const xs = TractEditor.controlPointXs(NUM_CONTROL_POINTS, NUM_SECTIONS);
+    const m = TractEditor.computeNaturalSplineSecondDerivatives(xs, cp);
+
+    // 各制御点 xs[i] でスプライン値を直接評価し、cp[i] と一致するか確認
+    for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
+      const x = xs[i]!;
+      const expected = cp[i]!;
+
+      // xs[i] が属する区間 seg を見つける
+      let seg = 0;
+      for (let s = 0; s < NUM_CONTROL_POINTS - 2; s++) {
+        if (x > xs[s + 1]!) seg = s + 1;
+      }
+
+      const x0 = xs[seg]!;
+      const x1 = xs[seg + 1]!;
+      const y0 = cp[seg]!;
+      const y1 = cp[seg + 1]!;
+      const m0 = m[seg]!;
+      const m1 = m[seg + 1]!;
+      const h = x1 - x0;
+
+      const a = x1 - x;
+      const b = x - x0;
+      const value =
+        (m0 * a * a * a) / (6 * h) +
+        (m1 * b * b * b) / (6 * h) +
+        (y0 / h - (m0 * h) / 6) * a +
+        (y1 / h - (m1 * h) / 6) * b;
+
+      expect(value).toBeCloseTo(expected, 4);
+    }
   });
 });

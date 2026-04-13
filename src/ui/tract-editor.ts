@@ -396,7 +396,7 @@ export class TractEditor {
       const dx = px - cx;
       const dy = py - cy;
       const dist2 = dx * dx + dy * dy;
-      if (dist2 <= bestDist) {
+      if (dist2 < bestDist) {
         bestDist = dist2;
         bestIdx = i;
       }

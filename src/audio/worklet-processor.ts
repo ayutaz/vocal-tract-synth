@@ -51,6 +51,7 @@ import {
   VOCAL_TRACT_PARAMETER_DESCRIPTORS,
   type VocalTractParamDescriptor,
 } from './parameters.js';
+import { NUM_SECTIONS, DEFAULT_F0 } from '../types/index.js';
 import type { WorkletMessage } from '../types/index.js';
 
 class VocalTractProcessor extends AudioWorkletProcessor {
@@ -77,7 +78,10 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       const msg = event.data;
       if (msg.type === 'setAreas') {
         // 断面積更新 (反射係数の再計算は setAreas 内で実行される)
-        this.vocalTract.setAreas(msg.areas);
+        // 配列長の不整合を防ぐバリデーション
+        if (msg.areas.length === NUM_SECTIONS) {
+          this.vocalTract.setAreas(msg.areas);
+        }
       } else if (msg.type === 'setSourceType') {
         // Phase 1 では pulse のみサポート。noise は Phase 2 以降で実装するため、
         // ここでは将来拡張用にメッセージを受け取っておく (現時点では何もしない)。
@@ -106,9 +110,9 @@ class VocalTractProcessor extends AudioWorkletProcessor {
     const freqParam = parameters.frequency;
     const f0 = (freqParam !== undefined && freqParam.length > 0)
       ? freqParam[0]
-      : 120;
+      : DEFAULT_F0;
 
-    const phaseIncrement = f0 / sampleRate;
+    const phaseIncrement = f0! / sampleRate;
     const blockSize = outputChannel.length;
     let phase = this.phase;
 
@@ -133,7 +137,7 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       const ch = output[c];
       if (ch !== undefined) {
         for (let i = 0; i < blockSize; i++) {
-          ch[i] = outputChannel[i];
+          ch[i] = outputChannel[i]!;
         }
       }
     }
