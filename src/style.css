@@ -197,7 +197,8 @@ h1 {
   position: absolute;
   top: 8px;
   left: 8px;
-  right: 8px;
+  width: calc(100% - 16px);
+  height: 200px;
   pointer-events: none;
 }
 

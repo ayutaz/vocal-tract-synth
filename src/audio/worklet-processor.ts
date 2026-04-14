@@ -114,10 +114,10 @@ class VocalTractProcessor extends AudioWorkletProcessor {
     // (k-rate の場合、Float32Array の長さは 1)
     const freqParam = parameters.frequency;
     const f0 = (freqParam !== undefined && freqParam.length > 0)
-      ? freqParam[0]
+      ? (freqParam[0] ?? DEFAULT_F0)
       : DEFAULT_F0;
 
-    const phaseIncrement = f0! / sampleRate;
+    const phaseIncrement = f0 / sampleRate;
     const blockSize = outputChannel.length;
     let phase = this.phase;
 

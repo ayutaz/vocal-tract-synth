@@ -10,7 +10,7 @@ import { Controls, PresetControls, SliderControls } from './ui/controls';
 import { AudioEngine } from './audio/engine';
 import { TransitionManager } from './models/vowel-presets';
 import { SpectrumDisplay } from './ui/spectrum-display';
-import { calculateFormants } from './models/formant-calculator';
+import { FormantController } from './models/formant-controller';
 
 // --- DOM 要素の取得 ---
 
@@ -57,43 +57,13 @@ function sendAreasToEngine(areas: Float64Array): void {
   }
 }
 
-// --- フォルマント計算（dirtyフラグ + throttle） ---
-
-let formantDirty = false;
-let lastFormantUpdate = 0;
-const FORMANT_INTERVAL = 80; // ~12fps
-
-function scheduleFormantUpdate(): void {
-  formantDirty = true;
-}
-
-function tickFormants(): void {
-  if (!formantDirty) return;
-  const now = performance.now();
-  if (now - lastFormantUpdate < FORMANT_INTERVAL) return;
-
-  formantDirty = false;
-  lastFormantUpdate = now;
-
-  const areas = tractEditor.getSectionAreas();
-  const result = calculateFormants(areas);
-  spectrumDisplay.updateFormants(result.f1, result.f2, result.f3);
-}
-
-// rAF ループでフォルマント計算を定期実行
-let formantRafId = 0;
-function formantLoop(): void {
-  tickFormants();
-  formantRafId = requestAnimationFrame(formantLoop);
-}
-
 // --- presetControls は tractEditor / controls のコールバックから参照されるため先に宣言 ---
 let presetControls: PresetControls;
 
 // 断面積エディタ
 const tractEditor = new TractEditor(canvas, (areas) => {
   sendAreasToEngine(areas);
-  scheduleFormantUpdate();
+  formantController.schedule();
 }, () => {
   presetControls.setActivePreset(null);
 });
@@ -103,7 +73,7 @@ const transitionManager = new TransitionManager(
   () => tractEditor.getControlPoints(),
   (points) => {
     tractEditor.setControlPoints(points);
-    // setControlPoints → onAreasChange → sendAreasToEngine + scheduleFormantUpdate
+    // setControlPoints → onAreasChange → sendAreasToEngine + formantController.schedule()
   },
 );
 
@@ -112,6 +82,12 @@ const spectrumDisplay = new SpectrumDisplay(
   spectrumCanvas,
   overlayCanvas,
   { f1: formantF1, f2: formantF2, f3: formantF3 },
+);
+
+// フォルマント計算コントローラ
+const formantController = new FormantController(
+  () => tractEditor.getSectionAreas(),
+  spectrumDisplay,
 );
 
 // Start/Stop ボタン
@@ -133,8 +109,7 @@ const controls: Controls = new Controls(
       }
 
       // フォルマント計算ループ開始
-      scheduleFormantUpdate();
-      formantRafId = requestAnimationFrame(formantLoop);
+      formantController.start();
     } catch (err) {
       engine.stop();
       throw err;
@@ -142,10 +117,7 @@ const controls: Controls = new Controls(
   },
   () => {
     // フォルマント計算ループ停止
-    if (formantRafId !== 0) {
-      cancelAnimationFrame(formantRafId);
-      formantRafId = 0;
-    }
+    formantController.stop();
     spectrumDisplay.stop();
     engine.stop();
     presetControls.setNoiseActive(false);
@@ -173,8 +145,9 @@ const sliderControls = new SliderControls(
   (value) => { engine.setVolume(value); },
 );
 
-void sliderControls;
+// SliderControls: 副作用でイベント登録済み（参照保持不要）
+void sliderControls; // eslint-disable-line @typescript-eslint/no-unused-expressions
 
 // 初期フォルマント計算（Canvas表示用）
-scheduleFormantUpdate();
-tickFormants();
+formantController.schedule();
+formantController.start();

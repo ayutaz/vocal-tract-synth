@@ -80,7 +80,7 @@ export class AudioEngine {
     // AnalyserNode（スペクトル分析）
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.8;
+    analyser.smoothingTimeConstant = 0.6; // 0.8だと母音遷移(150ms)に追従しきれない
     this.analyserNode = analyser;
 
     // ノード接続: WorkletNode → GainNode → AnalyserNode → destination
