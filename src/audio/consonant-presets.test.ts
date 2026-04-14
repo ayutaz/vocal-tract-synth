@@ -7,17 +7,20 @@ import { CONSONANT_PRESETS, getConsonantPreset, getAllConsonantIds } from './con
 import { MIN_AREA_PROGRAM, MAX_AREA, NUM_SECTIONS } from '../types/index';
 import type { ConsonantId } from '../types/index';
 
-describe('consonant-presets - 全19音素の妥当性', () => {
+describe('consonant-presets - 全22音素の妥当性', () => {
+  // Phase 6: 19 音素 (摩擦音 6 + 破裂音 6 + 破擦音 4 + 弾音 1 + 半母音 2)
+  // Phase 7: + 鼻音 3 種 (/m/ /n/ /ɲ/) = 22 音素
   const allIds: ConsonantId[] = [
     's', 'sh', 'h', 'hi', 'fu', 'z',
     'k', 't', 'p', 'g', 'd', 'b',
     'tsh', 'ts', 'dzh', 'dz',
     'r', 'j', 'w',
+    'm', 'n', 'ny', // Phase 7 鼻音
   ];
 
-  it('getAllConsonantIds() が19音素すべてを返す', () => {
+  it('getAllConsonantIds() が22音素すべてを返す', () => {
     const ids = getAllConsonantIds();
-    expect(ids.length).toBe(19);
+    expect(ids.length).toBe(22);
     for (const id of allIds) {
       expect(ids).toContain(id);
     }
@@ -173,6 +176,73 @@ describe('consonant-presets - 調音位置の区別', () => {
       const preset = getConsonantPreset(id)!;
       expect(preset.constrictionArea).toBeGreaterThan(0.05);
       expect(preset.constrictionArea).toBeLessThan(0.5);
+    }
+  });
+});
+
+describe('consonant-presets - Phase 7 鼻音', () => {
+  const nasalIds: ConsonantId[] = ['m', 'n', 'ny'];
+
+  it('鼻音 3 種が nasal カテゴリを持ち、有声である', () => {
+    for (const id of nasalIds) {
+      const preset = getConsonantPreset(id)!;
+      expect(preset.category).toBe('nasal');
+      expect(preset.voiced).toBe(true);
+    }
+  });
+
+  it('鼻音 3 種は velopharyngealArea を 1.0〜2.0 cm² の範囲で持つ', () => {
+    for (const id of nasalIds) {
+      const preset = getConsonantPreset(id)!;
+      expect(preset.velopharyngealArea).toBeDefined();
+      // 典型値 1.5〜2.0 cm²、下限は 1.0 cm² を許容
+      expect(preset.velopharyngealArea!).toBeGreaterThanOrEqual(1.0);
+      expect(preset.velopharyngealArea!).toBeLessThanOrEqual(2.0);
+    }
+  });
+
+  it('鼻音は完全閉鎖 (constrictionArea ≤ 0.05) を持つ', () => {
+    for (const id of nasalIds) {
+      const preset = getConsonantPreset(id)!;
+      expect(preset.constrictionArea).toBeLessThanOrEqual(0.05);
+    }
+  });
+
+  it('鼻音はノイズパラメータを持たない', () => {
+    for (const id of nasalIds) {
+      const preset = getConsonantPreset(id)!;
+      expect(preset.noise).toBeUndefined();
+    }
+  });
+
+  it('/m/ は両唇閉鎖 (idx 0-3)', () => {
+    const m = getConsonantPreset('m')!;
+    expect(m.constrictionRange.start).toBeLessThanOrEqual(3);
+    expect(m.constrictionRange.end).toBeLessThanOrEqual(3);
+  });
+
+  it('/n/ は歯茎閉鎖 (idx 3-7)', () => {
+    const n = getConsonantPreset('n')!;
+    expect(n.constrictionRange.start).toBeGreaterThanOrEqual(3);
+    expect(n.constrictionRange.end).toBeLessThanOrEqual(7);
+  });
+
+  it('/ɲ/ (ny) は硬口蓋領域 (idx 8-13)', () => {
+    const ny = getConsonantPreset('ny')!;
+    expect(ny.constrictionRange.start).toBeGreaterThanOrEqual(8);
+    expect(ny.constrictionRange.end).toBeLessThanOrEqual(13);
+  });
+
+  it('非鼻音は velopharyngealArea を持たない', () => {
+    const nonNasalIds: ConsonantId[] = [
+      's', 'sh', 'h', 'hi', 'fu', 'z',
+      'k', 't', 'p', 'g', 'd', 'b',
+      'tsh', 'ts', 'dzh', 'dz',
+      'r', 'j', 'w',
+    ];
+    for (const id of nonNasalIds) {
+      const preset = getConsonantPreset(id)!;
+      expect(preset.velopharyngealArea).toBeUndefined();
     }
   });
 });

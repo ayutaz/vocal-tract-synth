@@ -213,6 +213,23 @@ h1 {
   cursor: not-allowed;
 }
 
+/* Phase 7: 鼻音 (/m/ /n/ /ɲ/) は視覚的に区別するため専用カラー */
+.consonant-demo-btn.nasal {
+  color: #c084fc;
+  border-color: #3a3360;
+}
+
+.consonant-demo-btn.nasal:hover {
+  background: #251f3f;
+  border-color: #c084fc;
+}
+
+.consonant-demo-btn.nasal:active {
+  background: #c084fc;
+  color: #1a1a2e;
+  transform: scale(0.97);
+}
+
 /* ===== Auto Sing ===== */
 
 #auto-sing-controls {

@@ -277,16 +277,40 @@ export class AudioEngine {
    * vocal-tract.ts の反射係数を逐次更新する。補間途中で再度呼び出した場合は
    * 「現在の補間中の値」を始点として新 target へ即座切替わる (クリック回避)。
    *
+   * Phase 7: targetVelumArea を指定すると velopharyngealArea も同じ補間カーブで
+   * 線形補間する (鼻音の開閉時のクリックノイズ防止)。未指定時は velum を
+   * 触らず現在値を維持する (= Phase 6 と同一挙動)。
+   *
    * @param targetAreas      長さ NUM_SECTIONS の遷移先断面積配列
    * @param durationSamples  遷移時間 (サンプル数)
+   * @param targetVelumArea  (Phase 7 optional) velopharyngealArea の遷移先
    */
-  scheduleTransition(targetAreas: Float64Array, durationSamples: number): void {
+  scheduleTransition(
+    targetAreas: Float64Array,
+    durationSamples: number,
+    targetVelumArea?: number,
+  ): void {
     if (this.workletNode === null) return;
-    const msg: WorkletMessage = {
-      type: 'scheduleTransition',
-      targetAreas,
-      durationSamples,
-    };
+    const msg: WorkletMessage = targetVelumArea !== undefined
+      ? { type: 'scheduleTransition', targetAreas, durationSamples, targetVelumArea }
+      : { type: 'scheduleTransition', targetAreas, durationSamples };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * Phase 7: 鼻腔カップリング面積 (velopharyngeal port area) を設定する。
+   *
+   * 0 で velum 閉鎖 (鼻腔経路を完全にスキップ = Phase 6 と同一挙動)。
+   * 1.5〜2.0 cm² で鼻音時の全開状態 (3 ポート Smith 接合が起動)。
+   *
+   * 即時切替であり、クリックノイズを避けたい場合は scheduleTransition に
+   * targetVelumArea を渡して線形補間する運用を推奨する。
+   *
+   * @param velopharyngealArea velopharyngeal port area (cm²)
+   */
+  setNasalCoupling(velopharyngealArea: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setNasalCoupling', velopharyngealArea };
     this.workletNode.port.postMessage(msg);
   }
 
@@ -325,6 +349,14 @@ export class AudioEngine {
     for (const t of this.consonantTimeouts) clearTimeout(t);
     this.consonantTimeouts.length = 0;
     this.setConstrictionNoise(-1, 0, 0, 0);
+
+    // Phase 7 レビュー対応: 鼻音 → 非鼻音の連打で velum が開いたままになるのを防ぐ。
+    // 非鼻音が要求された時点で velum を即座に閉鎖する (既存シーケンスの velum 補間は
+    // setNasalCoupling 内で transitionVelumActive=false にクリアされる)。
+    // 鼻音の場合は以降の scheduleTransition が targetVelumArea を指定するため触らない。
+    if (preset.category !== 'nasal') {
+      this.setNasalCoupling(0);
+    }
 
     // 狭窄形状を生成: 現在の areas をコピーし、constrictionRange の区間のみ上書き。
     // currentAreas は呼び出し側 (main.ts) で既にコピー済みの想定だが、
@@ -393,6 +425,29 @@ export class AudioEngine {
         }, burstMs + votMs);
         this.consonantTimeouts.push(t2);
       }, closureMs + 10);
+      this.consonantTimeouts.push(t1);
+    } else if (preset.category === 'nasal') {
+      // ===== Phase 7: 鼻音シーケンス =====
+      // 1. 母音形状 → 口腔閉鎖 + velum 開放に 15 ms 遷移
+      //    (velopharyngealArea を 0 → preset.velopharyngealArea に同時補間)
+      // 2. 70 ms 鼻音持続 (口腔閉鎖 + velum 開放)
+      // 3. 口腔閉鎖 → 母音形状 + velum 閉鎖に 20 ms 遷移
+      //    (velopharyngealArea を preset.velopharyngealArea → 0 に同時補間)
+      //
+      // ノイズ注入は不要 (鼻音は声門音源の鼻腔経路のみで生成される)。
+      // クリックノイズ回避のため、velum の開閉は必ず scheduleTransition の
+      // targetVelumArea 経由で線形補間する (即時切替は避ける)。
+      const velumOpenArea = preset.velopharyngealArea ?? 1.8;
+      // 1. 閉鎖 + velum 開放への遷移
+      this.scheduleTransition(constrictionAreas, msToSamples(15), velumOpenArea);
+      // 2. 鼻音持続 (70 ms) 後に復帰シーケンス開始
+      const holdMs = 70;
+      const openMs = 15;
+      const closeMs = 20;
+      const t1 = setTimeout(() => {
+        // 3. 母音形状 + velum 閉鎖への復帰遷移
+        this.scheduleTransition(currentAreas, msToSamples(closeMs), 0);
+      }, holdMs + openMs);
       this.consonantTimeouts.push(t1);
     } else {
       // ===== 破擦音 / 弾音 / 半母音 (簡易実装) =====

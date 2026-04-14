@@ -16,6 +16,13 @@ export const DEFAULT_AREA = 4.0; // cm²（均一管）
 // 強い狭窄はプログラム制御 (setAreas) 経由で MIN_AREA_PROGRAM までクランプ可能とする。
 export const MIN_AREA_PROGRAM = 0.01; // cm²
 
+// ===== Phase 7: 鼻腔管パラメータ =====
+
+export const NASAL_NUM_SECTIONS = 30;                              // 鼻腔管区間数
+export const NASAL_LENGTH = 11.4;                                  // cm（鼻咽腔～鼻孔、成人男性平均）
+export const NASAL_SECTION_LENGTH = NASAL_LENGTH / NASAL_NUM_SECTIONS; // ≈ 0.38 cm/区間
+export const NASAL_JUNCTION_INDEX = 20;                            // 口腔44区間における鼻腔接合点（軟口蓋位置）
+
 // ===== 声門パラメータ =====
 
 export const DEFAULT_F0 = 120;        // Hz
@@ -60,8 +67,17 @@ export type WorkletMessage =
   // Phase 6: 子音基盤メッセージ
   | { type: 'setConstrictionNoise'; position: number; intensity: number;
       centerFreq: number; bandwidth: number }
-  | { type: 'scheduleTransition'; targetAreas: Float64Array; durationSamples: number }
-  | { type: 'cancelTransition' };
+  // Phase 6 → Phase 7 拡張: targetVelumArea (optional) を追加
+  // 未指定時は velum を補間対象から外し、現在値を維持する（Phase 6 と同一挙動）。
+  | { type: 'scheduleTransition';
+      targetAreas: Float64Array;
+      targetVelumArea?: number;
+      durationSamples: number }
+  | { type: 'cancelTransition' }
+  // Phase 7: 鼻腔管メッセージ
+  // velopharyngealArea=0 で velum 閉鎖（鼻腔経路を完全にスキップ = Phase 6 と同一挙動）。
+  // 1.5〜2.0 cm² で鼻音時の全開状態（3 ポート Smith 接合が起動）。
+  | { type: 'setNasalCoupling'; velopharyngealArea: number };
 
 // ===== 声門音源インターフェース（Phase 2 で抽出） =====
 
@@ -96,14 +112,16 @@ export type ConsonantId =
   | 's' | 'sh' | 'h' | 'hi' | 'fu' | 'z'           // 摩擦音
   | 'k' | 't' | 'p' | 'g' | 'd' | 'b'              // 破裂音
   | 'tsh' | 'ts' | 'dzh' | 'dz'                    // 破擦音
-  | 'r' | 'j' | 'w';                               // 弾音・半母音
+  | 'r' | 'j' | 'w'                                // 弾音・半母音
+  | 'm' | 'n' | 'ny';                              // Phase 7: 鼻音 3 種
 
 export type ConsonantCategory =
   | 'plosive'      // 破裂音（閉鎖→バースト→VOT）
   | 'fricative'    // 摩擦音（持続的狭窄+ノイズ）
   | 'affricate'    // 破擦音（閉鎖→摩擦の連続）
   | 'flap'         // 弾音
-  | 'approximant'; // 半母音
+  | 'approximant'  // 半母音
+  | 'nasal';       // Phase 7: 鼻音（口腔閉鎖 + velum 開放）
 
 export interface ConsonantPreset {
   id: ConsonantId;
@@ -124,6 +142,9 @@ export interface ConsonantPreset {
   burstMs?: number;                  // バースト長（破裂・破擦のみ）
   frictionMs?: number;               // 摩擦区間長（摩擦・破擦）
   vot?: number;                      // ms (有声=負, 無声=正)
+  // Phase 7: 鼻音時の velopharyngeal port 開放面積 (cm²)
+  // 鼻音プリセットのみ指定 (1.5〜2.0 が典型)。非鼻音では undefined のまま。
+  velopharyngealArea?: number;
 }
 
 // ===== UI コールバック型 =====

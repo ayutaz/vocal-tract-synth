@@ -47,7 +47,9 @@ import {
   LIP_REFLECTION,
   RADIATION_ALPHA,
   SAMPLE_RATE,
+  NASAL_JUNCTION_INDEX,
 } from '../types/index.js';
+import { NasalTract } from './nasal-tract.js';
 
 // 数値発散防止のソフトクリッピング閾値
 const SOFT_CLIP_THRESHOLD = 10.0;
@@ -91,6 +93,21 @@ export class VocalTract {
   private bpfZ1: number = 0;
   private bpfZ2: number = 0;
 
+  // ===== Phase 7: 鼻腔分岐管 =====
+  // 30 区間の鼻腔管を保持し、velum 開放時 (velopharyngealArea > 0) のみ
+  // 3 ポート Smith 接合を経由して口腔管と結合する。
+  // velopharyngealArea === 0 のとき、散乱ループは従来の 2 ポート分岐のみを実行し、
+  // 鼻腔管の processSample 呼び出しもスキップされるため、Phase 6 までの動作と完全同一。
+  private readonly nasalTract: NasalTract;
+  // velopharyngeal port area (cm²): 0 = 閉鎖, 1.5〜2.0 = 全開（鼻音時の典型値）
+  private velopharyngealArea: number = 0;
+  // 3 ポート接合の事前計算: 1 / (A_p + A_o + A_n)
+  // setNasalCoupling / setAreas 時に再計算し、processSample では参照のみ。
+  private cachedNasalASumInv: number = 0;
+  // 3 ポート接合から鼻腔管側へ注入される入射波 (= 2k - w_n)
+  // 散乱ループ内で計算し、processSample 末尾で nasalTract.processSample に渡す。
+  private nasalPharyngealInput: number = 0;
+
   constructor() {
     this.n = NUM_SECTIONS;
     this.forwardWave = new Float64Array(this.n);
@@ -106,6 +123,9 @@ export class VocalTract {
     }
     // 均一管なので反射係数は全てゼロ
     this.updateReflectionCoefficients();
+
+    // Phase 7: 鼻腔分岐管を初期化（velum 閉鎖状態なので発声には影響しない）
+    this.nasalTract = new NasalTract();
   }
 
   /**
@@ -121,6 +141,11 @@ export class VocalTract {
     const sb = this.scratchBackward;
     const r = this.reflectionCoefficients;
     const N = this.n;
+
+    // Phase 7: 鼻腔カップリング判定（散乱ループ内の毎サンプル分岐を避けるためループ外で計算）
+    // velopharyngealArea === 0 のときはループ内で 3 ポート分岐に入らない = Phase 6 と完全同一挙動。
+    const nasalOn = this.velopharyngealArea > 0;
+    const J = NASAL_JUNCTION_INDEX;
 
     // ---- 1 サンプル = 2 半ステップ ----
     // 物理的に正しい離散化 (1 区間 = Δt/2 の遅延) を得るため、
@@ -141,10 +166,40 @@ export class VocalTract {
       //   f[k]    = sf[k+1] + delta
       //   b[k+1]  = sb[k]   + delta
       // 均一管では r[k]=0 なので f[k] = sf[k+1], b[k+1] = sb[k] の純粋な遅延となる。
+      //
+      // Phase 7: nasalOn && k === J - 1 のとき、境界 J-1（区間 J-1 と J の間、
+      // すなわち軟口蓋位置）で通常の 2 ポート接合を 3 ポート Smith 接合に置き換える。
+      // A_n = 0 （velum 閉鎖）のときは分岐に入らないため、既存の 2 ポート挙動と完全同一。
       for (let k = 0; k < N - 1; k++) {
-        const delta = r[k]! * (sf[k + 1]! - sb[k]!);
-        f[k] = sf[k + 1]! + delta;
-        b[k + 1] = sb[k]! + delta;
+        if (nasalOn && k === J - 1) {
+          // ---- 3 ポート Smith 接合（軟口蓋 velum 位置） ----
+          // 口腔前方ポート p: 区間 J 側（声門側）から接合点へ向かう前進波 = sf[J]
+          // 口腔後方ポート o: 区間 J-1 側（唇側）から接合点へ向かう後退波 = sb[J-1]
+          // 鼻腔ポート n:    鼻咽腔端 (nasal idx N_nasal-1) から接合点へ向かう後退波
+          //
+          // 接合点の共通圧力 k_pressure = (A_p*w_p + A_o*w_o + A_n*w_n) / (A_p+A_o+A_n)
+          // 散乱後の各波:
+          //   f[k]  (= 区間 J-1 の前進波、唇側方向)        = 2k - w_p
+          //   b[k+1](= 区間 J   の後退波、声門側方向)      = 2k - w_o
+          //   鼻腔への入射波                                = 2k - w_n
+          const w_p = sf[k + 1]!;
+          const w_o = sb[k]!;
+          const w_n = this.nasalTract.getPharyngealBackwardWave();
+          const A_p = this.areas[k + 1]!;
+          const A_o = this.areas[k]!;
+          const A_n = this.velopharyngealArea;
+          const k_pressure = (A_p * w_p + A_o * w_o + A_n * w_n) * this.cachedNasalASumInv;
+          const two_k = 2 * k_pressure;
+          f[k] = two_k - w_p;
+          b[k + 1] = two_k - w_o;
+          // 鼻腔への入射波は step ごとに上書きされ、最終的に step=1 の値が nasalTract に渡される
+          this.nasalPharyngealInput = two_k - w_n;
+        } else {
+          // 通常の 2 ポート Smith 1 乗算接合
+          const delta = r[k]! * (sf[k + 1]! - sb[k]!);
+          f[k] = sf[k + 1]! + delta;
+          b[k + 1] = sb[k]! + delta;
+        }
       }
 
       // ---- 2.5 Phase 6: 狭窄ノイズ注入 ----
@@ -196,13 +251,27 @@ export class VocalTract {
       else if (b[k]! < -SOFT_CLIP_THRESHOLD) b[k] = -SOFT_CLIP_THRESHOLD;
     }
 
-    // ---- 7. 放射フィルタ (1 次差分 HPF) ----
-    //   output = f[0] - alpha * prev_f0
+    // ---- 7. 口腔放射フィルタ (1 次差分 HPF) ----
+    //   oralOutput = f[0] - alpha * prev_f0
     const currentLipInput = f[0]!;
-    const output = currentLipInput - RADIATION_ALPHA * this.prevLipInput;
+    const oralOutput = currentLipInput - RADIATION_ALPHA * this.prevLipInput;
     this.prevLipInput = currentLipInput;
 
-    return output;
+    // ---- 8. Phase 7: 鼻腔管の処理と出力ミキシング ----
+    // velum 閉鎖時 (velopharyngealArea === 0) は鼻腔管の処理自体をスキップし、
+    // nasalPharyngealInput も 0 のままなので鼻腔管の状態は進まない → Phase 6 と完全同一。
+    // velum 開放時は step ループ内で計算された最新の nasalPharyngealInput
+    // （= 2 半ステップ目で上書きされた値）を 1 サンプル分の入射波として鼻腔管に渡す。
+    // 1 サンプル = 2 半ステップ構造は NasalTract.processSample 側が内部的に実装しているため、
+    // ここでは 1 サンプルにつき 1 回だけ呼ぶ。
+    let nasalOutput = 0;
+    if (nasalOn) {
+      nasalOutput = this.nasalTract.processSample(this.nasalPharyngealInput);
+      // 次サンプルで散乱ループが走るまで再利用されないようクリア
+      this.nasalPharyngealInput = 0;
+    }
+
+    return oralOutput + nasalOutput;
   }
 
   /**
@@ -338,9 +407,52 @@ export class VocalTract {
   }
 
   /**
+   * Phase 7: 鼻腔カップリング面積（velopharyngeal area）を設定する。
+   *
+   * area === 0 で velum 閉鎖（鼻腔側の計算を完全スキップ → Phase 6 と同一挙動）。
+   * area > 0 で velum 開放（3 ポート Smith 接合が起動し、鼻腔管が駆動される）。
+   *
+   * 事前計算として 1 / (A_p + A_o + A_n) を cachedNasalASumInv に格納する。
+   * これにより processSample 内の 3 ポート接合で除算を回避できる。
+   * なお setAreas で A_p, A_o が変わった場合にも再計算が必要だが、
+   * 呼び出し側 (worklet-processor) が setAreas 後に setNasalCoupling を呼び直す運用を想定する。
+   *
+   * @param area velopharyngeal area (cm²). 0=閉鎖, 1.5-2.0=鼻音時全開
+   */
+  setNasalCoupling(area: number): void {
+    if (!Number.isFinite(area) || area < 0) return;
+    this.velopharyngealArea = area;
+    if (area > 0) {
+      // A_p = 声門側区間 (NASAL_JUNCTION_INDEX)
+      // A_o = 唇側区間 (NASAL_JUNCTION_INDEX - 1)
+      // A_n = velopharyngealArea
+      const Ap = this.areas[NASAL_JUNCTION_INDEX]!;
+      const Ao = this.areas[NASAL_JUNCTION_INDEX - 1]!;
+      this.cachedNasalASumInv = 1.0 / (Ap + Ao + area);
+    } else {
+      this.cachedNasalASumInv = 0;
+    }
+  }
+
+  /**
+   * Phase 7: 現在の velopharyngeal area を返す。
+   */
+  getNasalCoupling(): number {
+    return this.velopharyngealArea;
+  }
+
+  /**
+   * Phase 7: 内部の NasalTract インスタンスを返す（テスト/デバッグ用）。
+   */
+  getNasalTract(): NasalTract {
+    return this.nasalTract;
+  }
+
+  /**
    * 波動変数と放射フィルタ状態をゼロクリアする。断面積は保持する。
    * Phase 6: 狭窄ノイズ用 Biquad BPF の状態変数もクリア (フィルタ係数と
    * constrictionPosition/Gain は保持し、setConstrictionNoise() の再呼び出しを不要にする)。
+   * Phase 7: NasalTract の状態と 3 ポート接合由来の入射波バッファもクリア。
    */
   reset(): void {
     this.forwardWave.fill(0);
@@ -351,5 +463,8 @@ export class VocalTract {
     // Phase 6: BPF 状態変数のクリア
     this.bpfZ1 = 0;
     this.bpfZ2 = 0;
+    // Phase 7: 鼻腔管の状態と 3 ポート接合由来の入射波バッファをクリア
+    this.nasalTract.reset();
+    this.nasalPharyngealInput = 0;
   }
 }

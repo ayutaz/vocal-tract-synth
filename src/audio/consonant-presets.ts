@@ -1,7 +1,7 @@
 import type { ConsonantId, ConsonantPreset } from '../types/index.js';
 
 /**
- * Phase 6: 19 音素の子音プリセット定義
+ * Phase 6+7: 22 音素の子音プリセット定義
  *
  * 各プリセットは「先行/後続母音形状を呼び出し側で渡す」前提で設計されている。
  * `constrictionRange` は 44 区間モデルにおける狭窄/閉鎖を作るインデックス範囲。
@@ -21,6 +21,7 @@ import type { ConsonantId, ConsonantPreset } from '../types/index.js';
  * - 破擦音: 閉鎖 → 摩擦 の連続
  * - 弾音 /ɾ/: 短時間の弾き (closureMs のみ、ノイズなし)
  * - 半母音 /j/, /w/: 母音形状を維持して後続母音へ遷移 (持続音、ノイズなし)
+ * - 鼻音 /m/ /n/ /ɲ/: 口腔閉鎖 + velum 開放 (velopharyngealArea で指定)
  */
 export const CONSONANT_PRESETS: Record<ConsonantId, ConsonantPreset> = {
   // ===== 摩擦音 (6音素) =====
@@ -279,6 +280,48 @@ export const CONSONANT_PRESETS: Record<ConsonantId, ConsonantPreset> = {
     constrictionArea: 0.5,
     // noise: undefined (半母音はノイズなし)
   },
+
+  // ===== Phase 7: 鼻音 (3音素) =====
+  // 鼻音は「口腔閉鎖 + velum 開放」で発声される。
+  // constrictionRange の区間を constrictionArea (=0.01, 完全閉鎖) で上書きし、
+  // 同時に velopharyngealArea = 1.8 cm² で 3 ポート Smith 接合を起動する。
+  // ノイズ注入は不要（鼻音は声門音源由来の有声音のみ）。
+
+  m: {
+    id: 'm',
+    ipa: 'm',
+    category: 'nasal',
+    voiced: true,
+    // 両唇閉鎖 (/p/ /b/ と同位置)
+    constrictionRange: { start: 0, end: 3 },
+    constrictionArea: 0.01,
+    velopharyngealArea: 1.8,
+    // noise: undefined (鼻音はノイズなし)
+  },
+
+  n: {
+    id: 'n',
+    ipa: 'n',
+    category: 'nasal',
+    voiced: true,
+    // 歯茎閉鎖 (Phase 6 レビュー後の /t/ /d/ と同位置)
+    constrictionRange: { start: 3, end: 7 },
+    constrictionArea: 0.01,
+    velopharyngealArea: 1.8,
+    // noise: undefined (鼻音はノイズなし)
+  },
+
+  ny: {
+    id: 'ny',
+    ipa: 'ɲ',
+    category: 'nasal',
+    voiced: true,
+    // 硬口蓋閉鎖 (/j/ と同じ調音領域)
+    constrictionRange: { start: 8, end: 13 },
+    constrictionArea: 0.01,
+    velopharyngealArea: 1.8,
+    // noise: undefined (鼻音はノイズなし)
+  },
 };
 
 /**
@@ -297,10 +340,11 @@ export function getAllConsonantIds(): ConsonantId[] {
 }
 
 // ============================================================================
-// Phase 6: 子音プリセット
+// Phase 6 + 7: 子音プリセット
 // ----------------------------------------------------------------------------
-// 本ファイルは Phase 6 (子音基盤) で導入された 19 音素 (摩擦音 6 + 破裂音 6 +
-// 破擦音 4 + 弾音 1 + 半母音 2) の物理パラメータ表である。
+// 本ファイルは Phase 6 (子音基盤) で 19 音素 (摩擦音 6 + 破裂音 6 + 破擦音 4 +
+// 弾音 1 + 半母音 2) を導入し、Phase 7 で鼻音 3 音素 (/m/ /n/ /ɲ/) を追加して
+// 計 22 音素となった物理パラメータ表である。
 //
 // 各プリセットは「現在の母音形状を起点に constrictionRange の区間のみ
 // constrictionArea で上書きする」運用を想定し、コアーティキュレーションの
@@ -310,4 +354,7 @@ export function getAllConsonantIds(): ConsonantId[] {
 // 解剖学的な調音位置に基づいて設定されている (Phase 6 レビュー対応で再マッピング済)。
 // /h/ は声門由来摩擦のため constrictionRange を -1 で無効化し、Phase 6 では
 // スキップ可能としている。
+//
+// Phase 7 の鼻音は velopharyngealArea (typ. 1.8 cm²) を指定し、
+// engine.playConsonant が 3 ポート Smith 接合 (vocal-tract.ts) を起動する。
 // ============================================================================

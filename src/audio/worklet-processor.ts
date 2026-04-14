@@ -87,6 +87,16 @@ class VocalTractProcessor extends AudioWorkletProcessor {
   private transitionElapsedSamples: number = 0;
   private transitionDurationSamples: number = 0;
 
+  // ===== Phase 7: velum 線形補間 =====
+  // scheduleTransition の拡張で targetVelumArea が指定されたとき、
+  // velopharyngealArea も 44 区間断面積と同じ補間カーブで線形補間する。
+  // 鼻音の遷移時に velum を瞬時に開閉するとクリックノイズが出るため、
+  // 断面積補間と同期させて滑らかに開閉する。
+  // transitionVelumActive が false のときは velum 補間をスキップする。
+  private transitionStartVelumArea: number = 0;
+  private transitionTargetVelumArea: number = 0;
+  private transitionVelumActive: boolean = false;
+
   static get parameterDescriptors(): VocalTractParamDescriptor[] {
     return VOCAL_TRACT_PARAMETER_DESCRIPTORS;
   }
@@ -106,7 +116,9 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         // 断面積更新 (反射係数の再計算は setAreas 内で実行される)
         // 配列長の不整合を防ぐバリデーション
         // Phase 6: 手動操作優先 — 補間中であれば即座に確定値で上書きし、補間を停止する。
+        // Phase 7: velum 補間も同時に停止する (手動操作優先の原則)。
         this.transitionActive = false;
+        this.transitionVelumActive = false;
         if (msg.areas.length === NUM_SECTIONS) {
           this.vocalTract.setAreas(msg.areas);
         }
@@ -146,6 +158,15 @@ class VocalTractProcessor extends AudioWorkletProcessor {
           msg.centerFreq,
           msg.bandwidth,
         );
+      } else if (msg.type === 'setNasalCoupling') {
+        // Phase 7: velopharyngeal port (鼻腔カップリング面積) の即時設定。
+        // 0 で velum 閉鎖 (鼻腔経路を完全にスキップ = Phase 6 と同一挙動)。
+        // 1.5-2.0 cm² で鼻音時の全開状態 (3 ポート Smith 接合が起動)。
+        // 進行中の velum 補間があれば上書きされる (手動操作優先の原則)。
+        if (Number.isFinite(msg.velopharyngealArea) && msg.velopharyngealArea >= 0) {
+          this.vocalTract.setNasalCoupling(msg.velopharyngealArea);
+          this.transitionVelumActive = false;
+        }
       } else if (msg.type === 'scheduleTransition') {
         // Phase 6: サンプル精度の線形補間を開始
         // 補間途中で新たな scheduleTransition を受信した場合は、
@@ -167,9 +188,22 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         const requested = msg.durationSamples > 0 ? msg.durationSamples : 1;
         this.transitionDurationSamples = requested < 512 ? 512 : requested;
         this.transitionActive = true;
+        // Phase 7: velum 補間のセットアップ
+        // targetVelumArea が指定された場合のみ velum 補間を有効化する。
+        // 指定なしの場合 (既存 Phase 6 の呼び出し) は velum を触らず、
+        // 現在の velopharyngealArea を維持する。
+        if (msg.targetVelumArea !== undefined && Number.isFinite(msg.targetVelumArea)) {
+          this.transitionStartVelumArea = this.vocalTract.getNasalCoupling();
+          this.transitionTargetVelumArea = msg.targetVelumArea < 0 ? 0 : msg.targetVelumArea;
+          this.transitionVelumActive = true;
+        } else {
+          this.transitionVelumActive = false;
+        }
       } else if (msg.type === 'cancelTransition') {
         // Phase 6: 補間を中断する (現在の中間状態のまま停止)
+        // Phase 7: velum 補間も同時に停止する
         this.transitionActive = false;
+        this.transitionVelumActive = false;
       }
     };
   }
@@ -204,16 +238,23 @@ class VocalTractProcessor extends AudioWorkletProcessor {
     const shimmerAmt = this.shimmerAmount;
     let jitterFactor = this.currentJitterFactor;
 
-    // ===== Phase 6: サンプル精度線形補間 (quantum 単位の更新) =====
+    // ===== Phase 6 + 7: サンプル精度線形補間 (quantum 単位の更新) =====
     // 128 サンプル quantum の先頭で 1 回補間を進める。
     // (子音遷移は 5–60 ms = 220–2640 サンプルなので、128 サンプル粒度でも
     //  人間の聴覚的に十分滑らか。process() 内のコストを最小化するため
     //  サンプル毎ではなく quantum 毎の更新としている。)
+    //
+    // Phase 7: transitionVelumActive が true のとき、velopharyngealArea も
+    // 同じ補間カーブで線形補間する。鼻音の開閉時にクリックノイズを防ぐ目的。
     if (this.transitionActive) {
       const t = this.transitionElapsedSamples / this.transitionDurationSamples;
       if (t >= 1.0) {
         // 補間完了: 最終値を確定して停止
         this.vocalTract.setAreas(this.transitionTargetAreas);
+        if (this.transitionVelumActive) {
+          this.vocalTract.setNasalCoupling(this.transitionTargetVelumArea);
+          this.transitionVelumActive = false;
+        }
         this.transitionActive = false;
       } else {
         // 線形補間: interim = start + (target - start) * t
@@ -224,6 +265,12 @@ class VocalTractProcessor extends AudioWorkletProcessor {
           interim[k] = start[k]! + (target[k]! - start[k]!) * t;
         }
         this.vocalTract.setAreas(interim);
+        // Phase 7: velum 線形補間 (同じ t を適用)
+        if (this.transitionVelumActive) {
+          const velumInterim = this.transitionStartVelumArea
+            + (this.transitionTargetVelumArea - this.transitionStartVelumArea) * t;
+          this.vocalTract.setNasalCoupling(velumInterim);
+        }
       }
       this.transitionElapsedSamples += blockSize;
     }
