@@ -138,6 +138,8 @@ const controls: Controls = new Controls(
         spectrumDisplay.start();
       }
       formantController.start();
+      // バグ修正: engine 起動後にテキスト読み上げボタンの状態を再計算
+      textReadControls.refreshButtonState();
     } catch (err) {
       engine.stop();
       throw err;
@@ -155,6 +157,8 @@ const controls: Controls = new Controls(
     engine.stop();
     presetControls.setNoiseActive(false);
     controls.setState('idle');
+    // バグ修正: engine 停止後にテキスト読み上げボタンを無効化
+    textReadControls.refreshButtonState();
   },
 );
 
@@ -399,6 +403,8 @@ textReadControls = new TextReadControls(
     operationMode.setMode('manual');
     textReadControls.setPlaying(false);
   },
+  // バグ修正: isPlayable — engine が起動していなければ読み上げボタンを無効化
+  () => engine.isRunning(),
 );
 
 // OperationMode 変更時の UI 一括制御

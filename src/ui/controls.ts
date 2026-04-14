@@ -540,6 +540,9 @@ export class TextReadControls {
   private readonly rateValueEl: HTMLElement;
   private readonly onPlayRequested: (text: string, rate: number) => void;
   private readonly onStopRequested: () => void;
+  // バグ修正: engine が起動済みかを問い合わせるコールバック。
+  // 未指定時は常に true を返し、後方互換を保つ。
+  private readonly isPlayable: () => boolean;
 
   private playing = false;
   // IME 入力中フラグ。compositionstart で true、compositionend で false。
@@ -552,6 +555,7 @@ export class TextReadControls {
     rateValueEl: HTMLElement,
     onPlayRequested: (text: string, rate: number) => void,
     onStopRequested: () => void,
+    isPlayable?: () => boolean,
   ) {
     this.textInput = textInput;
     this.textReadBtn = textReadBtn;
@@ -559,6 +563,7 @@ export class TextReadControls {
     this.rateValueEl = rateValueEl;
     this.onPlayRequested = onPlayRequested;
     this.onStopRequested = onStopRequested;
+    this.isPlayable = isPlayable ?? (() => true);
 
     // イベント結線
     this.textInput.addEventListener('input', this.handleTextInput);
@@ -684,7 +689,11 @@ export class TextReadControls {
   /**
    * ボタン有効性の計算ロジック。
    * - 再生中: 常に有効（停止ボタンとして機能）
-   * - 停止中: テキスト空 / IME 中 / textarea disabled のいずれかで無効
+   * - 停止中: テキスト空 / IME 中 / textarea disabled / engine 未起動 のいずれかで無効
+   *
+   * バグ修正: engine 未起動時はボタンを無効化する。
+   * 従来は `play()` が throw するまでガードがなく、ユーザがテキスト入力後に
+   * Start を押さずに読み上げボタンを押すとエラーになっていた。
    */
   private updateButtonState(): void {
     if (this.playing) {
@@ -692,6 +701,16 @@ export class TextReadControls {
       return;
     }
     const empty = this.textInput.value.trim().length === 0;
-    this.textReadBtn.disabled = empty || this.isComposing || this.textInput.disabled;
+    const playable = this.isPlayable();
+    this.textReadBtn.disabled =
+      empty || this.isComposing || this.textInput.disabled || !playable;
+  }
+
+  /**
+   * 外部から状態変化（engine の起動/停止など）を通知してボタン状態を再計算する。
+   * Controls.setState('running') / engine.stop() の前後で呼ぶ。
+   */
+  refreshButtonState(): void {
+    this.updateButtonState();
   }
 }
