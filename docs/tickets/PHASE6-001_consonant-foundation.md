@@ -9,7 +9,7 @@
 | マイルストーン | [docs/MILESTONES.md `Phase 6` セクション](../MILESTONES.md) |
 | 要件定義 | [docs/REQUIREMENTS_CONSONANT_TTS.md 2.1 / 2.2 / 2.4 / 2.5](../REQUIREMENTS_CONSONANT_TTS.md) |
 | 技術調査 | [docs/CONSONANT_RESEARCH.md 1.1〜1.6 / 2.1〜2.4](../CONSONANT_RESEARCH.md) |
-| 状態 | 計画中（未着手） |
+| 状態 | ✅ 完了 |
 | 前提条件 | Phase 5 完了（Kelly-Lochbaum 44区間モデル、KLGLOTT88/LF声門音源、壁面損失、Auto Sing が動作中） |
 | 推定工数 | 3 名構成 × 約 5 営業日 |
 | 優先度 | 高（Phase 7-9 の全機能の基盤） |

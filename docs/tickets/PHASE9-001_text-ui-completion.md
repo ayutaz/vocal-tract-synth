@@ -8,7 +8,7 @@
 | フェーズ名 | Phase 9 — テキスト読み上げUI完成 |
 | マイルストーン | [docs/MILESTONES.md `Phase 9` セクション](../MILESTONES.md) |
 | 要件定義 | [docs/REQUIREMENTS_CONSONANT_TTS.md 4.1 / 4.2 / 4.3 / 6 非機能要件](../REQUIREMENTS_CONSONANT_TTS.md) |
-| 状態 | 計画中（未着手） |
+| 状態 | ✅ 完了 |
 | 前提条件 | Phase 6 完了（[PHASE6-001](./PHASE6-001_consonant-foundation.md)）, Phase 7 完了（[PHASE7-001](./PHASE7-001_nasal-tract-model.md)）, Phase 8 完了（[PHASE8-001](./PHASE8-001_text-to-speech.md)）。`play(text)` API、`PhonemePlayer` クラス、`onPhonemeChange` / `onComplete` コールバックが動作中。 |
 | 推定工数 | 4 名構成 × 約 5 営業日 |
 | 優先度 | 高（Phase 6-8 で構築したテキスト読み上げパイプラインの集大成。本フェーズ完了で「ユーザがブラウザ上でひらがなを入力して読み上げが聴ける」完成形 UX が成立する） |

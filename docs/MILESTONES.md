@@ -2,7 +2,7 @@
 
 ## 完了サマリー
 
-Phase 1-5: 母音合成 + Auto Sing が完成。Phase 6-9: 子音対応・テキスト読み上げを計画中。
+Phase 1-9: 母音合成 + Auto Sing + 子音対応・テキスト読み上げが完成。
 
 | Phase | タイトル | 状態 | チケット | コミット |
 |-------|---------|------|---------|---------|
@@ -11,10 +11,10 @@ Phase 1-5: 母音合成 + Auto Sing が完成。Phase 6-9: 子音対応・テキ
 | 3 | 可視化・ピッチ制御 | ✅ | -- | `6c5afd7` |
 | 4 | 自動歌唱モード | ✅ | -- | `37241f8` |
 | 5 | 声質向上・UI改善 | ✅ | -- | `c972298` |
-| 6 | 子音基盤（摩擦音・破裂音） | 計画中 | [PHASE6-001](tickets/PHASE6-001_consonant-foundation.md) | -- |
-| 7 | 鼻腔管モデル・鼻音 | 計画中 | [PHASE7-001](tickets/PHASE7-001_nasal-tract-model.md) | -- |
-| 8 | テキスト→音素→発声 | 計画中 | [PHASE8-001](tickets/PHASE8-001_text-to-speech.md) | -- |
-| 9 | テキスト読み上げUI完成 | 計画中 | [PHASE9-001](tickets/PHASE9-001_text-ui-completion.md) | -- |
+| 6 | 子音基盤（摩擦音・破裂音） | ✅ | [PHASE6-001](tickets/PHASE6-001_consonant-foundation.md) | `fcd04c2` (実装) + `ff18a84` (レビュー対応) + `27ae8d6` (Phase 1-7レビュー対応) |
+| 7 | 鼻腔管モデル・鼻音 | ✅ | [PHASE7-001](tickets/PHASE7-001_nasal-tract-model.md) | `0607d88` (実装) + `27ae8d6` (レビュー対応) |
+| 8 | テキスト→音素→発声 | ✅ | [PHASE8-001](tickets/PHASE8-001_text-to-speech.md) | `99a64f0` (実装) + `7265e1c` (レビュー対応) |
+| 9 | テキスト読み上げUI完成 | ✅ | [PHASE9-001](tickets/PHASE9-001_text-ui-completion.md) | `3b4f1a1` (実装) + `805819d` (レビュー対応) |
 
 ### Phase 6-9 の依存関係
 

@@ -8,7 +8,7 @@
 | フェーズ名 | Phase 8 — テキスト→音素→発声 |
 | マイルストーン | [docs/MILESTONES.md `Phase 8` セクション](../MILESTONES.md) |
 | 要件定義 | [docs/REQUIREMENTS_CONSONANT_TTS.md 3.1 / 3.2 / 3.3 / 3.4 / 2.3 撥音規則](../REQUIREMENTS_CONSONANT_TTS.md) |
-| 状態 | 計画中（未着手） |
+| 状態 | ✅ 完了 |
 | 前提条件 | Phase 6 完了（[PHASE6-001](./PHASE6-001_consonant-foundation.md)）, Phase 7 完了（[PHASE7-001](./PHASE7-001_nasal-tract-model.md)）。MIN_AREA 二段化、`setConstrictionNoise`、`scheduleTransition`、19 子音プリセット、3 鼻音プリセット、3 ポート接合と velum 制御が動作中。 |
 | 推定工数 | 4 名構成 × 約 6 営業日 |
 | 優先度 | 高（Phase 9 UI 完成の前提。プログラマブル `play(text)` が成立しないと UI 実装の検証ができない） |

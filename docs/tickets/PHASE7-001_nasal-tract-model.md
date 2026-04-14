@@ -9,7 +9,7 @@
 | マイルストーン | [docs/MILESTONES.md `Phase 7` セクション](../MILESTONES.md) |
 | 要件定義 | [docs/REQUIREMENTS_CONSONANT_TTS.md 2.3 / 2.5](../REQUIREMENTS_CONSONANT_TTS.md) |
 | 技術調査 | [docs/CONSONANT_RESEARCH.md 1.4 / 2.3](../CONSONANT_RESEARCH.md) |
-| 状態 | 計画中（未着手） |
+| 状態 | ✅ 完了 |
 | 前提条件 | Phase 6 完了（[PHASE6-001](./PHASE6-001_consonant-foundation.md)）。MIN_AREA 二段化、`setConstrictionNoise`、`scheduleTransition`、`consonant-presets.ts` の19音素プリセットが動作中。 |
 | 推定工数 | 3 名構成 × 約 5 営業日 |
 | 優先度 | 高（鼻音なしでは「ま行」「な行」「ん」が表現不可。Phase 8 以降のテキスト読み上げの土台） |
