@@ -66,6 +66,7 @@ export class TractEditor {
   // --- ドラッグ状態 ---
   private draggingIndex: number | null = null;
   private activePointerId: number | null = null;
+  private dragEnabled: boolean = true;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -123,6 +124,17 @@ export class TractEditor {
   /** 16制御点の現在値を返す（コピーではなく読み取り専用ビュー） */
   getControlPoints(): Readonly<Float64Array> {
     return this.controlPoints;
+  }
+
+  /** ドラッグ操作の有効/無効を切り替え（Auto Sing中は無効化） */
+  setDragEnabled(enabled: boolean): void {
+    this.dragEnabled = enabled;
+    this.canvas.style.cursor = enabled ? 'crosshair' : 'not-allowed';
+    if (!enabled && this.draggingIndex !== null) {
+      this.draggingIndex = null;
+      this.activePointerId = null;
+      this.draw();
+    }
   }
 
   /** 44区間の現在値を返す（コピーではなく読み取り専用ビュー） */
@@ -326,6 +338,8 @@ export class TractEditor {
   // ==========================================================================
 
   private handlePointerDown = (ev: PointerEvent): void => {
+    // ドラッグ無効時は無視（Auto Sing中）
+    if (!this.dragEnabled) return;
     // 既に別のポインタでドラッグ中なら無視
     if (this.activePointerId !== null) return;
 

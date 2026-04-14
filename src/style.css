@@ -139,6 +139,39 @@ h1 {
   border-color: #ff6b6b;
 }
 
+/* ===== Auto Sing ===== */
+
+#auto-sing-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+#auto-sing-btn {
+  padding: 8px 20px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  border: 1px solid #334;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #16213e;
+  color: #c084fc;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+#auto-sing-btn:hover {
+  background: #1f2f50;
+  border-color: #c084fc;
+}
+
+#auto-sing-btn.active {
+  background: #c084fc;
+  color: #1a1a2e;
+  border-color: #c084fc;
+}
+
 /* ===== スライダー ===== */
 
 #sliders {

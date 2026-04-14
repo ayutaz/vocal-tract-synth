@@ -173,6 +173,24 @@ export class AudioEngine {
   }
 
   /**
+   * ジッター量を設定する (0.0-0.015)。Auto Sing から使用。
+   */
+  setJitter(amount: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setJitter', amount };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * シマー量を設定する (0.0-0.020)。Auto Sing から使用。
+   */
+  setShimmer(amount: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setShimmer', amount };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
    * AnalyserNode を返す。未初期化時は null。
    * スペクトル表示やフォルマント計算に使用する。
    */

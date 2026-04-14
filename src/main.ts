@@ -1,7 +1,7 @@
 // ============================================================================
 // エントリポイント — 各モジュールの結線
 // ----------------------------------------------------------------------------
-// Phase 3: スペクトル表示、フォルマント計算、F0/音量スライダーを追加。
+// Phase 4: Auto Sing モード（自動歌唱）を追加。
 // ============================================================================
 
 import './style.css';
@@ -11,6 +11,8 @@ import { AudioEngine } from './audio/engine';
 import { TransitionManager } from './models/vowel-presets';
 import { SpectrumDisplay } from './ui/spectrum-display';
 import { FormantController } from './models/formant-controller';
+import { AutoSinger } from './ui/auto-singer/index';
+import { AutoSingControls } from './ui/auto-singer/ui-controls';
 
 // --- DOM 要素の取得 ---
 
@@ -40,8 +42,10 @@ const volumeSlider = requireElement('volume-slider', HTMLInputElement);
 const volumeValue = requireElement('volume-value', HTMLElement);
 const spectrumCanvas = requireElement('spectrum-canvas', HTMLCanvasElement);
 const overlayCanvas = requireElement('overlay-canvas', HTMLCanvasElement);
+const autoSingBtn = requireElement('auto-sing-btn', HTMLButtonElement);
+const bpmSlider = requireElement('bpm-slider', HTMLInputElement);
+const bpmValueEl = requireElement('bpm-value', HTMLElement);
 
-// フォルマント表示要素
 const formantF1 = document.querySelector<HTMLElement>('#formant-display .f1')!;
 const formantF2 = document.querySelector<HTMLElement>('#formant-display .f2')!;
 const formantF3 = document.querySelector<HTMLElement>('#formant-display .f3')!;
@@ -50,15 +54,19 @@ const formantF3 = document.querySelector<HTMLElement>('#formant-display .f3')!;
 
 const engine = new AudioEngine();
 
-// 断面積をEngineに送信するヘルパ
 function sendAreasToEngine(areas: Float64Array): void {
   if (engine.isRunning()) {
     engine.sendAreas(areas);
   }
 }
 
-// --- presetControls は tractEditor / controls のコールバックから参照されるため先に宣言 ---
+// --- presetControls / autoSinger は後方参照 ---
 let presetControls: PresetControls;
+let autoSinger: AutoSinger;
+let autoSingControls: AutoSingControls;
+
+// 現在のF0スライダー値を保持（Auto Singerの基準F0として使用）
+let currentBaseF0 = 120;
 
 // 断面積エディタ
 const tractEditor = new TractEditor(canvas, (areas) => {
@@ -73,11 +81,10 @@ const transitionManager = new TransitionManager(
   () => tractEditor.getControlPoints(),
   (points) => {
     tractEditor.setControlPoints(points);
-    // setControlPoints → onAreasChange → sendAreasToEngine + formantController.schedule()
   },
 );
 
-// スペクトル表示
+// スペクトル��示
 const spectrumDisplay = new SpectrumDisplay(
   spectrumCanvas,
   overlayCanvas,
@@ -101,14 +108,11 @@ const controls: Controls = new Controls(
       await engine.start(tractEditor.getSectionAreas());
       controls.setState('running');
 
-      // スペクトル表示を開始
       const analyser = engine.getAnalyser();
       if (analyser) {
         spectrumDisplay.setAnalyser(analyser);
         spectrumDisplay.start();
       }
-
-      // フォルマント計算ループ開始
       formantController.start();
     } catch (err) {
       engine.stop();
@@ -116,7 +120,11 @@ const controls: Controls = new Controls(
     }
   },
   () => {
-    // フォルマント計算ループ停止
+    // Auto Sing停止
+    if (autoSinger.isActive()) {
+      autoSinger.stop();
+      autoSingControls.setActive(false);
+    }
     formantController.stop();
     spectrumDisplay.stop();
     engine.stop();
@@ -130,7 +138,9 @@ presetControls = new PresetControls(
   presetsContainer,
   noiseBtn,
   (id) => {
-    transitionManager.transitionTo(id);
+    if (!autoSinger.isActive()) {
+      transitionManager.transitionTo(id);
+    }
   },
   (isNoise) => {
     engine.setSourceType(isNoise ? 'noise' : 'voiced');
@@ -141,13 +151,48 @@ presetControls = new PresetControls(
 const sliderControls = new SliderControls(
   f0Slider, f0Value,
   volumeSlider, volumeValue,
-  (hz) => { engine.setFrequency(hz); },
+  (hz) => {
+    currentBaseF0 = hz;
+    if (!autoSinger.isActive()) {
+      engine.setFrequency(hz);
+    }
+  },
   (value) => { engine.setVolume(value); },
 );
+void sliderControls;
 
-// SliderControls: 副作用でイベント登録済み（参照保持不要）
-void sliderControls; // eslint-disable-line @typescript-eslint/no-unused-expressions
+// --- Auto Singer ---
 
-// 初期フォルマント計算（Canvas表示用）
+autoSinger = new AutoSinger({
+  engine,
+  transitionManager,
+  tractEditor,
+  formantController,
+  getBaseF0: () => currentBaseF0,
+});
+
+autoSingControls = new AutoSingControls(
+  autoSingBtn,
+  bpmSlider,
+  bpmValueEl,
+  (active) => {
+    if (active && engine.isRunning()) {
+      autoSinger.start(
+        // AudioContext を取得（engine内部にあるが、getAnalyser経由で間接的に利用）
+        // AutoSinger は setInterval ベースなので AudioContext.currentTime は不要
+        // start() は内部で audioContext なしでも動作する設計
+        null as unknown as AudioContext,
+      );
+    } else {
+      autoSinger.stop();
+      autoSingControls.setActive(false);
+    }
+  },
+  (bpm) => {
+    autoSinger.setBpm(bpm);
+  },
+);
+
+// 初期フォルマント計算
 formantController.schedule();
 formantController.start();

@@ -60,8 +60,13 @@ class VocalTractProcessor extends AudioWorkletProcessor {
   private vocalTract: VocalTract;
 
   // 位相アキュムレータ (声門音源の位相 [0, 1))
-  // F0 / sampleRate を毎サンプル加算し、1.0 を超えたら 1.0 を減算する。
   private phase: number = 0;
+
+  // ジッター/シマー (Phase 4 Auto Sing)
+  private jitterAmount: number = 0;
+  private shimmerAmount: number = 0;
+  // LCG 乱数シード（process()内GC回避のためMath.random()を避ける）
+  private jitterSeed: number = 54321;
 
   static get parameterDescriptors(): VocalTractParamDescriptor[] {
     return VOCAL_TRACT_PARAMETER_DESCRIPTORS;
@@ -90,6 +95,14 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         if (Number.isFinite(msg.oq)) {
           this.glottalSource.setOpenQuotient(msg.oq);
         }
+      } else if (msg.type === 'setJitter') {
+        if (Number.isFinite(msg.amount)) {
+          this.jitterAmount = msg.amount;
+        }
+      } else if (msg.type === 'setShimmer') {
+        if (Number.isFinite(msg.amount)) {
+          this.shimmerAmount = msg.amount;
+        }
       }
     };
   }
@@ -117,9 +130,18 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       ? (freqParam[0] ?? DEFAULT_F0)
       : DEFAULT_F0;
 
-    const phaseIncrement = f0 / sampleRate;
+    // ジッター: F0に微小ランダム変動を加える
+    let effectiveF0 = f0;
+    if (this.jitterAmount > 0) {
+      this.jitterSeed = (this.jitterSeed * 1664525 + 1013904223) >>> 0;
+      const jitterNoise = this.jitterSeed / 4294967296 * 2 - 1;
+      effectiveF0 = f0 * (1 + this.jitterAmount * jitterNoise);
+    }
+
+    const phaseIncrement = effectiveF0 / sampleRate;
     const blockSize = outputChannel.length;
     let phase = this.phase;
+    const shimmer = this.shimmerAmount;
 
     for (let i = 0; i < blockSize; i++) {
       // 位相を進める
@@ -129,7 +151,15 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       }
 
       // 声門音源 (KLGLOTT88 + 有声/無声ミキシング) → 声道フィルタ
-      const glottalSample = this.glottalSource.generateWithMix(phase);
+      let glottalSample = this.glottalSource.generateWithMix(phase);
+
+      // シマー: 振幅に微小ランダム変動
+      if (shimmer > 0) {
+        this.jitterSeed = (this.jitterSeed * 1664525 + 1013904223) >>> 0;
+        const shimmerNoise = this.jitterSeed / 4294967296 * 2 - 1;
+        glottalSample *= (1 + shimmer * shimmerNoise);
+      }
+
       const sample = this.vocalTract.processSample(glottalSample);
 
       outputChannel[i] = sample;

@@ -44,9 +44,9 @@ export type SourceType = 'voiced' | 'noise';
 export type WorkletMessage =
   | { type: 'setAreas'; areas: ArrayLike<number> }
   | { type: 'setSourceType'; sourceType: SourceType }
-  | { type: 'setOQ'; oq: number };
-  // Phase 4 で追加: { type: 'setJitter'; amount: number }
-  // Phase 4 で追加: { type: 'setShimmer'; amount: number }
+  | { type: 'setOQ'; oq: number }
+  | { type: 'setJitter'; amount: number }
+  | { type: 'setShimmer'; amount: number };
   // Phase 5 で追加: { type: 'setGlottalModel'; model: 'klglott88' | 'lf' }
   // Phase 5 で追加: { type: 'setRd'; rd: number }
   // Phase 5 で追加: { type: 'setAspiration'; level: number }
