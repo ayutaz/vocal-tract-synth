@@ -21,7 +21,12 @@ export const MIN_AREA_PROGRAM = 0.01; // cm²
 export const NASAL_NUM_SECTIONS = 30;                              // 鼻腔管区間数
 export const NASAL_LENGTH = 11.4;                                  // cm（鼻咽腔～鼻孔、成人男性平均）
 export const NASAL_SECTION_LENGTH = NASAL_LENGTH / NASAL_NUM_SECTIONS; // ≈ 0.38 cm/区間
-export const NASAL_JUNCTION_INDEX = 20;                            // 口腔44区間における鼻腔接合点（軟口蓋位置）
+// Phase 7 レビュー対応: 軟口蓋位置を解剖学的に正しい位置に補正
+// 唇から約 9.5cm (解剖学的な軟口蓋位置) に対応する区間インデックス。
+// SECTION_LENGTH ≈ 0.397 cm なので、idx = 24 は唇から 24 × 0.397 ≒ 9.53 cm。
+// （修正前の idx=20 では唇から 7.94 cm となり、硬口蓋付近に相当していた。）
+// 注: index 規約は「0=唇側, N-1=声門側」。
+export const NASAL_JUNCTION_INDEX = 24;                            // 口腔44区間における鼻腔接合点（軟口蓋位置）
 
 // ===== 声門パラメータ =====
 

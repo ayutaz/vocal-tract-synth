@@ -98,15 +98,21 @@ export class NasalTract {
   }
 
   /**
-   * 1 サンプル分の波動伝搬を計算し、鼻孔からの放射音圧を返す。
+   * 1 半ステップ分の散乱 + 境界条件のみを進める（壁面損失 / ソフトクリップ / 放射フィルタは適用しない）。
    *
-   * VocalTract.processSample と同じ「2 半ステップ × 散乱 + 境界条件 + 壁面損失
-   * + ソフトクリップ + 放射フィルタ」構造で実装する。
+   * Phase 7 レビュー対応: 鼻腔管呼び出しの時間スケール不整合修正。
+   * VocalTract.processSample は 1 サンプル内で 2 半ステップのループを回し、
+   * 各 step ごとに 3 ポート接合で鼻咽腔への入射波を更新する。
+   * 以前の実装では NasalTract.processSample が内部で再度 2 半ステップ回していたため、
+   * 1 サンプル呼び出しで鼻腔管は実質 4 半ステップ進み、かつ step=0 の入射波は捨てられていた。
    *
-   * @param pharyngealInput 3 ポート接合から鼻咽腔端 (index N-1) に入射する波
-   * @returns 鼻孔端 (index 0) からの放射出力
+   * この processHalfStep は VocalTract 側の step ループと 1:1 で同期するために使用する。
+   * 1 サンプルにつき 2 回呼ばれる想定で、壁面損失 / ソフトクリップ / 放射は
+   * 2 半ステップ目の直後に finalizeSample() で 1 回だけ適用する。
+   *
+   * @param pharyngealInput この半ステップで 3 ポート接合から鼻咽腔端 (index N-1) に入射する波
    */
-  processSample(pharyngealInput: number): number {
+  processHalfStep(pharyngealInput: number): void {
     const f = this.forwardWave;
     const b = this.backwardWave;
     const sf = this.scratchForward;
@@ -114,37 +120,49 @@ export class NasalTract {
     const r = this.reflectionCoefficients;
     const N = this.n;
 
-    // ---- 1 サンプル = 2 半ステップ ----
-    for (let step = 0; step < 2; step++) {
-      // ---- 1. 旧値をスクラッチへ複製 ----
-      for (let k = 0; k < N; k++) {
-        sf[k] = f[k]!;
-        sb[k] = b[k]!;
-      }
-
-      // ---- 2. 散乱ループ (境界 k = 0, ..., N-2) ----
-      // Smith 1 乗算接合 (VocalTract と同じ符号規約):
-      //   delta   = r[k] * (sf[k+1] - sb[k])
-      //   f[k]    = sf[k+1] + delta
-      //   b[k+1]  = sb[k]   + delta
-      for (let k = 0; k < N - 1; k++) {
-        const delta = r[k]! * (sf[k + 1]! - sb[k]!);
-        f[k] = sf[k + 1]! + delta;
-        b[k + 1] = sb[k]! + delta;
-      }
-
-      // ---- 3. 鼻咽腔端境界条件 (区間 N-1 側) ----
-      // 3 ポート接合から入射する波を f[N-1] にそのまま書き込む。
-      // 散乱ループでは f[N-1] は書かれない (k+1 <= N-1 ⇒ k <= N-2) ため、
-      // ここが唯一の書き込みとなる。
-      f[N - 1] = pharyngealInput;
-
-      // ---- 4. 鼻孔端境界条件 (区間 0 側) ----
-      // 鼻孔での開口端反射 (放射インピーダンスにより負の反射係数)。
-      // 簡略化のため LIP_REFLECTION (-0.85) を流用する。
-      // 散乱ループでは b[0] は書かれないので、ここが唯一の書き込みとなる。
-      b[0] = LIP_REFLECTION * sf[0]!;
+    // ---- 1. 旧値をスクラッチへ複製 ----
+    for (let k = 0; k < N; k++) {
+      sf[k] = f[k]!;
+      sb[k] = b[k]!;
     }
+
+    // ---- 2. 散乱ループ (境界 k = 0, ..., N-2) ----
+    // Smith 1 乗算接合 (VocalTract と同じ符号規約):
+    //   delta   = r[k] * (sf[k+1] - sb[k])
+    //   f[k]    = sf[k+1] + delta
+    //   b[k+1]  = sb[k]   + delta
+    for (let k = 0; k < N - 1; k++) {
+      const delta = r[k]! * (sf[k + 1]! - sb[k]!);
+      f[k] = sf[k + 1]! + delta;
+      b[k + 1] = sb[k]! + delta;
+    }
+
+    // ---- 3. 鼻咽腔端境界条件 (区間 N-1 側) ----
+    // 3 ポート接合から入射する波を f[N-1] にそのまま書き込む。
+    // 散乱ループでは f[N-1] は書かれない (k+1 <= N-1 ⇒ k <= N-2) ため、
+    // ここが唯一の書き込みとなる。
+    f[N - 1] = pharyngealInput;
+
+    // ---- 4. 鼻孔端境界条件 (区間 0 側) ----
+    // 鼻孔での開口端反射 (放射インピーダンスにより負の反射係数)。
+    // 簡略化のため LIP_REFLECTION (-0.85) を流用する。
+    // 散乱ループでは b[0] は書かれないので、ここが唯一の書き込みとなる。
+    b[0] = LIP_REFLECTION * sf[0]!;
+  }
+
+  /**
+   * 1 サンプル分の締め処理（壁面損失 + ソフトクリップ + 放射フィルタ）を実行し、
+   * 鼻孔からの放射出力を返す。
+   *
+   * Phase 7 レビュー対応: VocalTract の processSample で 2 回の processHalfStep を
+   * 呼び終えたあと、1 サンプルにつき 1 回だけ呼ぶ。
+   *
+   * @returns 鼻孔端 (index 0) からの放射出力
+   */
+  finalizeSample(): number {
+    const f = this.forwardWave;
+    const b = this.backwardWave;
+    const N = this.n;
 
     // ---- 5. 壁面損失 (1 サンプルにつき 1 回、全区間) ----
     const mu = WALL_LOSS_FACTOR;
@@ -168,6 +186,26 @@ export class NasalTract {
     this.prevNostrilInput = currentNostrilInput;
 
     return output;
+  }
+
+  /**
+   * 1 サンプル分の波動伝搬を計算し、鼻孔からの放射音圧を返す。
+   *
+   * Phase 7 レビュー対応: 内部で processHalfStep を 2 回呼び、
+   * 最後に finalizeSample で締める構造に変更した。
+   * 両半ステップとも同じ pharyngealInput を受け取るので、後方互換を維持しつつ
+   * 既存テスト（インパルス応答・長時間安定性・reset 同一性等）は従来通り動作する。
+   *
+   * VocalTract 側と連携する運用では processHalfStep / finalizeSample を直接呼び、
+   * step ごとに正しい pharyngealInput を渡すことで時間スケールの整合性を確保する。
+   *
+   * @param pharyngealInput 3 ポート接合から鼻咽腔端 (index N-1) に入射する波
+   * @returns 鼻孔端 (index 0) からの放射出力
+   */
+  processSample(pharyngealInput: number): number {
+    this.processHalfStep(pharyngealInput);
+    this.processHalfStep(pharyngealInput);
+    return this.finalizeSample();
   }
 
   /**

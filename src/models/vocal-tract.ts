@@ -151,6 +151,12 @@ export class VocalTract {
     // 物理的に正しい離散化 (1 区間 = Δt/2 の遅延) を得るため、
     // 1 サンプルにつき散乱 + 境界条件を 2 回実行する。
     // glottalSample は 1 サンプル間 (Δt) 持続する圧源とみなし、両半ステップで注入する。
+    //
+    // Phase 7 レビュー対応: 鼻腔管呼び出しの時間スケール不整合修正。
+    // 口腔の step ループと鼻腔の半ステップを 1:1 で同期させるため、
+    // 各 step の最後に nasalTract.processHalfStep を呼ぶ。
+    // 最後に nasalTract.finalizeSample() で壁面損失・ソフトクリップ・放射フィルタを
+    // 1 サンプルにつき 1 回だけ適用し、鼻孔放射出力を取得する。
     for (let step = 0; step < 2; step++) {
       // ---- 1. 旧値をスクラッチへ複製 ----
       // 散乱 / 境界条件の計算では現時刻の値を参照するため、in-place 更新が誤作動しないよう
@@ -233,6 +239,16 @@ export class VocalTract {
       // 声門端と同じく「前時刻の端点値」を反射するため、旧値 sf[0] を使う。
       // 散乱ループでは b[0] は書かれないので、ここが唯一の書き込みとなる。
       b[0] = LIP_REFLECTION * sf[0]!;
+
+      // ---- 4.5 Phase 7 レビュー対応: 鼻腔管の 1 半ステップ分の処理 ----
+      // この step で計算された nasalPharyngealInput を鼻腔管に渡し、
+      // 鼻腔管の散乱 + 境界条件を 1 半ステップ分だけ進める。
+      // 口腔の 2 半ステップと 1:1 で同期するため、step=0 と step=1 で
+      // それぞれ異なる pharyngealInput を鼻腔管が受け取る。
+      // 壁面損失・ソフトクリップ・放射は 2 半ステップ目の直後にループ外で 1 回だけ適用する。
+      if (nasalOn) {
+        this.nasalTract.processHalfStep(this.nasalPharyngealInput);
+      }
     }
 
     // ---- 5. 壁面損失 (1 サンプルにつき 1 回、全区間) ----
@@ -257,16 +273,17 @@ export class VocalTract {
     const oralOutput = currentLipInput - RADIATION_ALPHA * this.prevLipInput;
     this.prevLipInput = currentLipInput;
 
-    // ---- 8. Phase 7: 鼻腔管の処理と出力ミキシング ----
+    // ---- 8. Phase 7: 鼻腔管の締め処理と出力ミキシング ----
     // velum 閉鎖時 (velopharyngealArea === 0) は鼻腔管の処理自体をスキップし、
     // nasalPharyngealInput も 0 のままなので鼻腔管の状態は進まない → Phase 6 と完全同一。
-    // velum 開放時は step ループ内で計算された最新の nasalPharyngealInput
-    // （= 2 半ステップ目で上書きされた値）を 1 サンプル分の入射波として鼻腔管に渡す。
-    // 1 サンプル = 2 半ステップ構造は NasalTract.processSample 側が内部的に実装しているため、
-    // ここでは 1 サンプルにつき 1 回だけ呼ぶ。
+    //
+    // Phase 7 レビュー対応: 口腔と鼻腔の時間スケール整合性確保のため、
+    // 散乱・境界条件は step ループ内で processHalfStep によって 1 半ステップずつ進んでいる。
+    // ここでは 1 サンプルの締めとして壁面損失・ソフトクリップ・放射フィルタを
+    // finalizeSample 経由で 1 回だけ適用し、鼻孔放射出力を得る。
     let nasalOutput = 0;
     if (nasalOn) {
-      nasalOutput = this.nasalTract.processSample(this.nasalPharyngealInput);
+      nasalOutput = this.nasalTract.finalizeSample();
       // 次サンプルで散乱ループが走るまで再利用されないようクリア
       this.nasalPharyngealInput = 0;
     }
@@ -296,6 +313,16 @@ export class VocalTract {
       this.areas[i] = DEFAULT_AREA;
     }
     this.updateReflectionCoefficients();
+
+    // Phase 7 レビュー対応: velum 開放中の cachedNasalASumInv の自己整合性を保つ
+    // setAreas は scheduleTransition 中に quantum 単位で呼ばれるため、
+    // velum が開いている間は A_p / A_o が逐次変化する。ここで再計算しないと
+    // 3 ポート接合で stale cache を参照し、圧力計算が誤差を蓄積する。
+    if (this.velopharyngealArea > 0) {
+      const Ap = this.areas[NASAL_JUNCTION_INDEX]!;
+      const Ao = this.areas[NASAL_JUNCTION_INDEX - 1]!;
+      this.cachedNasalASumInv = 1.0 / (Ap + Ao + this.velopharyngealArea);
+    }
   }
 
   /**

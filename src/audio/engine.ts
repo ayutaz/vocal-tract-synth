@@ -37,6 +37,13 @@ export class AudioEngine {
   // 連打 / stop() 時に確実にキャンセルできるようにする (競合・ゴーストノイズ防止)。
   private consonantTimeouts: ReturnType<typeof setTimeout>[] = [];
 
+  // Phase 7 レビュー対応: 現在の velopharyngeal port 開放面積の推定値。
+  // 非鼻音子音への連打時に velum を瞬断せず補間閉鎖するために参照する。
+  // setNasalCoupling() / scheduleTransition(..., targetVelumArea) の呼び出しのたびに
+  // 更新され、エンジン側のスレッドでの「いま velum が開いているか」の目安として使う。
+  // Worklet 側の実際の値とは quantum 単位の遅延があるが、クリック回避の判定用には十分。
+  private currentVelumArea: number = 0;
+
   /**
    * 音声合成を開始する。
    *
@@ -111,6 +118,8 @@ export class AudioEngine {
     // Phase 6 レビュー対応: 進行中の子音シーケンスをすべてキャンセル
     for (const t of this.consonantTimeouts) clearTimeout(t);
     this.consonantTimeouts.length = 0;
+    // Phase 7 レビュー対応: velum 状態を初期化
+    this.currentVelumArea = 0;
 
     // ノード切断（念のため）
     if (this.workletNode !== null) {
@@ -295,6 +304,12 @@ export class AudioEngine {
       ? { type: 'scheduleTransition', targetAreas, durationSamples, targetVelumArea }
       : { type: 'scheduleTransition', targetAreas, durationSamples };
     this.workletNode.port.postMessage(msg);
+    // Phase 7 レビュー対応: currentVelumArea を追跡
+    // targetVelumArea が指定された場合のみ更新（未指定時は現在値維持）。
+    // 補間の終点を代入しておく (補間の中間値までは追跡しない簡易実装)。
+    if (targetVelumArea !== undefined) {
+      this.currentVelumArea = targetVelumArea;
+    }
   }
 
   /**
@@ -312,6 +327,8 @@ export class AudioEngine {
     if (this.workletNode === null) return;
     const msg: WorkletMessage = { type: 'setNasalCoupling', velopharyngealArea };
     this.workletNode.port.postMessage(msg);
+    // Phase 7 レビュー対応: currentVelumArea を追跡
+    this.currentVelumArea = velopharyngealArea;
   }
 
   /**
@@ -351,12 +368,14 @@ export class AudioEngine {
     this.setConstrictionNoise(-1, 0, 0, 0);
 
     // Phase 7 レビュー対応: 鼻音 → 非鼻音の連打で velum が開いたままになるのを防ぐ。
-    // 非鼻音が要求された時点で velum を即座に閉鎖する (既存シーケンスの velum 補間は
-    // setNasalCoupling 内で transitionVelumActive=false にクリアされる)。
-    // 鼻音の場合は以降の scheduleTransition が targetVelumArea を指定するため触らない。
-    if (preset.category !== 'nasal') {
-      this.setNasalCoupling(0);
-    }
+    // 旧実装は setNasalCoupling(0) で即時閉鎖していたが、velum が開いている状態で
+    // 瞬断するとクリックノイズが発生するため、scheduleTransition に targetVelumArea=0 を
+    // 渡して線形補間で閉鎖する方式に変更した。
+    // 既に velum が閉じている場合 (currentVelumArea <= 0) は targetVelumArea を渡さず、
+    // 未指定扱い (velum 補間スキップ) とすることで Phase 6 と同じ挙動を維持する。
+    const needsVelumClose = preset.category !== 'nasal' && this.currentVelumArea > 0;
+    // 非鼻音への遷移時のみ target を 0 に。鼻音時や既に閉鎖済みのときは undefined。
+    const initialTargetVelumArea: number | undefined = needsVelumClose ? 0 : undefined;
 
     // 狭窄形状を生成: 現在の areas をコピーし、constrictionRange の区間のみ上書き。
     // currentAreas は呼び出し側 (main.ts) で既にコピー済みの想定だが、
@@ -380,11 +399,12 @@ export class AudioEngine {
     if (preset.category === 'fricative') {
       // ===== 摩擦音シーケンス =====
       // 1. 母音 → 狭窄形状に 20 ms 遷移
+      //    (Phase 7 レビュー対応: 直前が鼻音なら同じ補間カーブで velum を 0 に閉鎖)
       // 2. ノイズ ON
       // 3. frictionMs (デフォルト 70 ms) 持続
       // 4. 狭窄 → 母音に 20 ms 遷移
       // 5. ノイズ OFF
-      this.scheduleTransition(constrictionAreas, msToSamples(20));
+      this.scheduleTransition(constrictionAreas, msToSamples(20), initialTargetVelumArea);
       if (preset.noise && midPos >= 0) {
         this.setConstrictionNoise(
           midPos,
@@ -402,10 +422,11 @@ export class AudioEngine {
     } else if (preset.category === 'plosive') {
       // ===== 破裂音シーケンス =====
       // 1. 母音 → 閉鎖形状に 10 ms 遷移
+      //    (Phase 7 レビュー対応: 直前が鼻音なら同じ補間カーブで velum を 0 に閉鎖)
       // 2. closureMs (デフォルト 60 ms) 閉鎖保持
       // 3. バーストノイズ ON + 閉鎖 → 母音に 5 ms 開放遷移
       // 4. burstMs + max(VOT, 0) 後にノイズ OFF
-      this.scheduleTransition(constrictionAreas, msToSamples(10));
+      this.scheduleTransition(constrictionAreas, msToSamples(10), initialTargetVelumArea);
       const closureMs = preset.closureMs ?? 60;
       const t1 = setTimeout(() => {
         // バースト + 開放
@@ -453,7 +474,8 @@ export class AudioEngine {
       // ===== 破擦音 / 弾音 / 半母音 (簡易実装) =====
       // 母音 → 狭窄 → 母音 を 15 ms 遷移で行う。Phase 6 の暫定実装で、
       // Phase 8 で各カテゴリ専用の精密シーケンサに置き換える予定。
-      this.scheduleTransition(constrictionAreas, msToSamples(15));
+      // Phase 7 レビュー対応: 直前が鼻音なら同じ補間カーブで velum を 0 に閉鎖。
+      this.scheduleTransition(constrictionAreas, msToSamples(15), initialTargetVelumArea);
       if (preset.noise && midPos >= 0) {
         this.setConstrictionNoise(
           midPos,
