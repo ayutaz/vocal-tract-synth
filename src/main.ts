@@ -18,7 +18,11 @@ import { parseHiragana, resolveHatsuonAllophones } from './text/text-parser';
 import { generateTimeline } from './text/phoneme-timeline';
 import { PhonemePlayer } from './text/phoneme-player';
 import { DEFAULT_PROSODY } from './types/index';
-import type { ConsonantId } from './types/index';
+import type { ConsonantId, OperationMode } from './types/index';
+// Phase 9: テキスト読み上げ UI 完成
+import { PhonemeTimelineCanvas } from './ui/timeline-canvas';
+import { OperationModeManager } from './ui/operation-mode';
+import { TextReadControls } from './ui/controls';
 
 // --- DOM 要素の取得 ---
 
@@ -56,6 +60,12 @@ const rdValue = requireElement('rd-value', HTMLElement);
 const aspirationSlider = requireElement('aspiration-slider', HTMLInputElement);
 const aspirationValue = requireElement('aspiration-value', HTMLElement);
 const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+// Phase 9: テキスト読み上げ UI 要素
+const textInput = requireElement('text-input', HTMLTextAreaElement);
+const textReadBtn = requireElement('text-read-btn', HTMLButtonElement);
+const speechRateSlider = requireElement('speech-rate-slider', HTMLInputElement);
+const speechRateValue = requireElement('speech-rate-value', HTMLElement);
+const phonemeTimelineCanvasEl = requireElement('phoneme-timeline-canvas', HTMLCanvasElement);
 
 const formantF1 = document.querySelector<HTMLElement>('#formant-display .f1')!;
 const formantF2 = document.querySelector<HTMLElement>('#formant-display .f2')!;
@@ -75,6 +85,9 @@ function sendAreasToEngine(areas: Float64Array): void {
 let presetControls: PresetControls;
 let autoSinger: AutoSinger;
 let autoSingControls: AutoSingControls;
+// Phase 9: OperationMode と TextReadControls も後方参照
+let operationMode: OperationModeManager;
+let textReadControls: TextReadControls;
 
 // 現在のF0スライダー値を保持（Auto Singerの基準F0として使用）
 let currentBaseF0 = 120;
@@ -189,12 +202,18 @@ autoSingControls = new AutoSingControls(
   bpmValueEl,
   (active) => {
     if (active && engine.isRunning()) {
+      // Phase 9: OperationMode を autoSing に遷移（textRead中なら拒否）
+      if (!operationMode.canTransitionTo('autoSing')) {
+        autoSingControls.setActive(false);
+        return;
+      }
+      operationMode.setMode('autoSing');
       autoSinger.start();
-      presetControls.setEnabled(false);
     } else {
       autoSinger.stop();
-      presetControls.setEnabled(true);
       autoSingControls.setActive(false);
+      // Phase 9: manual モードに復帰
+      operationMode.setMode('manual');
     }
   },
   (bpm) => {
@@ -291,6 +310,140 @@ export async function play(
 
 // グローバル公開（DevTools / 後続 UI からの呼び出し用）
 (window as unknown as { play: typeof play }).play = play;
+
+// ============================================================================
+// Phase 9: テキスト読み上げ UI 完成形
+// ============================================================================
+//
+// OperationMode 状態機械で manual / autoSing / textRead の 3 モードを排他制御し、
+// PhonemeTimelineCanvas で再生中の音素をハイライト、tract-editor 上に狭窄位置
+// マーカーを描画する完成形 UI。
+// ============================================================================
+
+operationMode = new OperationModeManager();
+const timelineCanvas = new PhonemeTimelineCanvas(phonemeTimelineCanvasEl);
+
+// PhonemePlayer のコールバック設定
+phonemePlayer.onPhonemeChange((event, _index) => {
+  // 1. 声道形状の自動アニメーション
+  tractEditor.setControlPoints(event.tractAreas);
+  // 2. タイムラインのハイライト
+  timelineCanvas.highlightAt(event.startTime);
+  // 3. 子音区間の狭窄位置マーカー（母音区間では null で消去）
+  tractEditor.drawConstrictionMarker(event.constrictionNoise?.position ?? null);
+});
+
+phonemePlayer.onComplete(() => {
+  // 再生完了 → manual モードへ復帰
+  operationMode.setMode('manual');
+  textReadControls.setPlaying(false);
+  tractEditor.drawConstrictionMarker(null);
+  // タイムラインは最終音素ハイライトのまま残す（次の Stop / 再生で clear される）
+});
+
+// テキスト読み上げ UI コントロール
+textReadControls = new TextReadControls(
+  textInput,
+  textReadBtn,
+  speechRateSlider,
+  speechRateValue,
+  // onPlayRequested
+  (text, rate) => {
+    // textRead モードへ遷移
+    if (!operationMode.canTransitionTo('textRead')) {
+      console.warn('テキスト読み上げに切り替えられません（Auto Sing 中の可能性）');
+      return;
+    }
+    operationMode.setMode('textRead');
+    textReadControls.setPlaying(true);
+
+    // タイムライン描画
+    const isQuestion = /[？?]\s*$/.test(text);
+    const tokens = resolveHatsuonAllophones(parseHiragana(text));
+    if (tokens.length === 0) {
+      operationMode.setMode('manual');
+      textReadControls.setPlaying(false);
+      return;
+    }
+    const initialAreas = new Float64Array(tractEditor.getControlPoints());
+    const events = generateTimeline(
+      tokens,
+      { rate, prosody: { ...DEFAULT_PROSODY }, isQuestion },
+      initialAreas,
+    );
+    timelineCanvas.render(events);
+
+    // 再生開始
+    play(text, { rate }).catch((err) => {
+      console.error('play() error:', err);
+      operationMode.setMode('manual');
+      textReadControls.setPlaying(false);
+      timelineCanvas.clear();
+    });
+  },
+  // onStopRequested
+  () => {
+    phonemePlayer.stop();
+    timelineCanvas.clear();
+    tractEditor.drawConstrictionMarker(null);
+    operationMode.setMode('manual');
+    textReadControls.setPlaying(false);
+  },
+);
+
+// OperationMode 変更時の UI 一括制御
+operationMode.onChange((mode: OperationMode) => {
+  // tract-canvas のデータ属性を更新（CSS 視覚フィードバック用）
+  canvas.dataset['mode'] = mode;
+
+  switch (mode) {
+    case 'manual':
+      // 全 UI 有効化
+      tractEditor.setDragEnabled(true);
+      presetControls.setEnabled(true);
+      presetControls.setNoiseEnabled(true);
+      sliderControls.setEnabled(true);
+      voiceQualityControls.setEnabled(true);
+      autoSingControls.setEnabled(true);
+      autoSingControls.setBpmEnabled(true);
+      textReadControls.setEnabled(true);
+      break;
+
+    case 'autoSing':
+      // 声道ドラッグ・プリセット・テキスト読み上げを無効化
+      tractEditor.setDragEnabled(false);
+      presetControls.setEnabled(false);
+      presetControls.setNoiseEnabled(false);
+      // F0/Vol/Rd は Auto Sing 中も有効（基準値合算）
+      sliderControls.setEnabled(true);
+      voiceQualityControls.setEnabled(true);
+      // Auto Sing ボタンは停止用に有効
+      autoSingControls.setEnabled(true);
+      autoSingControls.setBpmEnabled(true);
+      textReadControls.setEnabled(false);
+      break;
+
+    case 'textRead':
+      // テキスト再生中は他をすべて無効化
+      tractEditor.setDragEnabled(false);
+      presetControls.setEnabled(false);
+      presetControls.setNoiseEnabled(false);
+      sliderControls.setEnabled(false);
+      voiceQualityControls.setEnabled(false);
+      autoSingControls.setEnabled(false);
+      autoSingControls.setBpmEnabled(false);
+      // テキスト読み上げ自身のコントロール (停止ボタンと速度) のみ有効
+      textReadControls.setEnabled(true);
+      break;
+  }
+});
+
+// Auto Sing ボタンと OperationMode の結線
+// 既存 AutoSingControls の onToggle コールバックは維持し、追加で OperationMode を更新
+// (既存の AutoSingControls 結線ロジックは上で行われているため、ここでは onChange 経由のみ)
+
+// 初期 UI 状態
+canvas.dataset['mode'] = 'manual';
 
 // 初期フォルマント計算
 formantController.schedule();

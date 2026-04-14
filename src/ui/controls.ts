@@ -99,6 +99,15 @@ export class Controls {
     this.setState('error');
   }
 
+  /**
+   * Phase 9: OperationModeManager からの一括 enable/disable 用 API。
+   * Start/Stop ボタンは 3 モード全てで常時有効であるため no-op とする。
+   * 他のコントロールクラスと API を統一するためだけに存在する。
+   */
+  setEnabled(_enabled: boolean): void {
+    // Start/Stop は常時有効（モードに関係なく再生停止可能）
+  }
+
   /** リソース解放（イベント解除） */
   destroy(): void {
     this.startStopBtn.removeEventListener('click', this.handleClick);
@@ -210,6 +219,15 @@ export class PresetControls {
     }
   }
 
+  /**
+   * Phase 9: Noise ボタンの enable/disable を独立制御する。
+   * Noise トグルは母音プリセットとは別系統のため、操作モード遷移時に
+   * プリセットとは独立して有効/無効を切替える必要がある。
+   */
+  setNoiseEnabled(enabled: boolean): void {
+    this.noiseBtn.disabled = !enabled;
+  }
+
   /** リソース解放（イベント解除） */
   destroy(): void {
     this.presetContainer.removeEventListener('click', this.handlePresetClick);
@@ -315,6 +333,30 @@ export class SliderControls {
     this.f0Slider.value = String(f0ToSlider(hz));
     this.updateF0Display(hz);
     this.onF0Change(hz);
+  }
+
+  /**
+   * Phase 9: F0 スライダーの enable/disable。
+   * textRead モードでは phonemePlayer 側が F0 を制御するため無効化する。
+   */
+  setF0Enabled(enabled: boolean): void {
+    this.f0Slider.disabled = !enabled;
+  }
+
+  /**
+   * Phase 9: 音量スライダーの enable/disable。
+   * textRead モードでは phonemePlayer 側が amplitude を制御するため無効化する。
+   */
+  setVolumeEnabled(enabled: boolean): void {
+    this.volumeSlider.disabled = !enabled;
+  }
+
+  /**
+   * Phase 9: 両スライダーを一括 enable/disable する。
+   */
+  setEnabled(enabled: boolean): void {
+    this.setF0Enabled(enabled);
+    this.setVolumeEnabled(enabled);
   }
 
   /** リソース解放（イベント解除） */
@@ -429,6 +471,16 @@ export class VoiceQualityControls {
     this.updateRdDisplay(rd);
   }
 
+  /**
+   * Phase 9: Rd / Aspiration / 声門モデルを一括 enable/disable する。
+   * textRead モードでは phonemePlayer 側が声質パラメータを制御するため無効化する。
+   */
+  setEnabled(enabled: boolean): void {
+    this.rdSlider.disabled = !enabled;
+    this.aspirationSlider.disabled = !enabled;
+    this.modelSelect.disabled = !enabled;
+  }
+
   /** リソース解放（イベント解除） */
   destroy(): void {
     this.rdSlider.removeEventListener('input', this.handleRdInput);
@@ -463,5 +515,168 @@ export class VoiceQualityControls {
 
   private updateAspirationDisplay(level: number): void {
     this.aspirationValueEl.textContent = `${Math.round(level * 100)}%`;
+  }
+}
+
+// ============================================================================
+// テキスト読み上げ UI (TextReadControls) — Phase 9 新規
+// ----------------------------------------------------------------------------
+// Phase 9 で追加されたテキスト読み上げ機能の UI コントローラ。
+// - textarea (ひらがな入力、IME 対応)
+// - 再生/停止トグルボタン
+// - 速度スライダー (0.5x〜2.0x)
+//
+// 再生状態は外部 (main.ts) から setPlaying() で同期され、
+// ボタンラベルと CSS クラス .playing を切替える。
+//
+// IME 入力中 (compositionstart〜compositionend) はボタンを無効化して
+// Enter キー確定によるうっかり再生を防ぐ。
+// ============================================================================
+
+export class TextReadControls {
+  private readonly textInput: HTMLTextAreaElement;
+  private readonly textReadBtn: HTMLButtonElement;
+  private readonly rateSlider: HTMLInputElement;
+  private readonly rateValueEl: HTMLElement;
+  private readonly onPlayRequested: (text: string, rate: number) => void;
+  private readonly onStopRequested: () => void;
+
+  private playing = false;
+  // IME 入力中フラグ。compositionstart で true、compositionend で false。
+  private isComposing = false;
+
+  constructor(
+    textInput: HTMLTextAreaElement,
+    textReadBtn: HTMLButtonElement,
+    rateSlider: HTMLInputElement,
+    rateValueEl: HTMLElement,
+    onPlayRequested: (text: string, rate: number) => void,
+    onStopRequested: () => void,
+  ) {
+    this.textInput = textInput;
+    this.textReadBtn = textReadBtn;
+    this.rateSlider = rateSlider;
+    this.rateValueEl = rateValueEl;
+    this.onPlayRequested = onPlayRequested;
+    this.onStopRequested = onStopRequested;
+
+    // イベント結線
+    this.textInput.addEventListener('input', this.handleTextInput);
+    this.textInput.addEventListener('compositionstart', this.handleCompositionStart);
+    this.textInput.addEventListener('compositionend', this.handleCompositionEnd);
+    this.textReadBtn.addEventListener('click', this.handleButtonClick);
+    this.rateSlider.addEventListener('input', this.handleRateInput);
+
+    // 初期表示
+    this.updateRateLabel();
+    this.updateButtonState();
+  }
+
+  // ==========================================================================
+  // 公開 API
+  // ==========================================================================
+
+  /**
+   * 再生中フラグを外部から同期する (main.ts から phonemePlayer の状態を反映)。
+   * 再生中は CSS クラス .playing とラベル「停止」を、停止中はラベル「読み上げ」を設定。
+   */
+  setPlaying(playing: boolean): void {
+    this.playing = playing;
+    this.textReadBtn.classList.toggle('playing', playing);
+    this.textReadBtn.textContent = playing ? '停止' : '読み上げ';
+    this.updateButtonState();
+  }
+
+  /**
+   * Phase 9: textarea + 速度スライダーを一括 enable/disable する。
+   * ボタン状態は updateButtonState() が再計算する。
+   */
+  setEnabled(enabled: boolean): void {
+    this.textInput.disabled = !enabled;
+    this.rateSlider.disabled = !enabled;
+    this.updateButtonState();
+  }
+
+  /**
+   * Phase 9: 再生ボタンのみを enable/disable する (engine 状態に応じた制御用)。
+   * enabled=true の場合は空文字列/IME 中を考慮した updateButtonState() を呼ぶ。
+   */
+  setButtonEnabled(enabled: boolean): void {
+    if (enabled) {
+      this.updateButtonState();
+    } else {
+      this.textReadBtn.disabled = true;
+    }
+  }
+
+  /** 現在の入力テキストを取得する。 */
+  getText(): string {
+    return this.textInput.value;
+  }
+
+  /** 現在の速度スライダー値を取得する (0.5〜2.0)。 */
+  getRate(): number {
+    return parseFloat(this.rateSlider.value);
+  }
+
+  /** リソース解放（イベント解除） */
+  destroy(): void {
+    this.textInput.removeEventListener('input', this.handleTextInput);
+    this.textInput.removeEventListener('compositionstart', this.handleCompositionStart);
+    this.textInput.removeEventListener('compositionend', this.handleCompositionEnd);
+    this.textReadBtn.removeEventListener('click', this.handleButtonClick);
+    this.rateSlider.removeEventListener('input', this.handleRateInput);
+  }
+
+  // ==========================================================================
+  // 内部
+  // ==========================================================================
+
+  private handleTextInput = (): void => {
+    this.updateButtonState();
+  };
+
+  private handleCompositionStart = (): void => {
+    this.isComposing = true;
+    this.updateButtonState();
+  };
+
+  private handleCompositionEnd = (): void => {
+    this.isComposing = false;
+    this.updateButtonState();
+  };
+
+  private handleButtonClick = (): void => {
+    if (this.playing) {
+      this.onStopRequested();
+    } else {
+      const text = this.textInput.value.trim();
+      if (text.length === 0) return;
+      const rate = this.getRate();
+      this.onPlayRequested(text, rate);
+    }
+  };
+
+  private handleRateInput = (): void => {
+    this.updateRateLabel();
+  };
+
+  private updateRateLabel(): void {
+    const rate = parseFloat(this.rateSlider.value);
+    this.rateValueEl.textContent = `${rate.toFixed(1)}x`;
+  }
+
+  /**
+   * ボタン有効性の計算ロジック。
+   * - 再生中: 常に有効（停止ボタンとして機能）
+   * - 停止中: テキスト空 / IME 中 / textarea disabled のいずれかで無効
+   */
+  private updateButtonState(): void {
+    if (this.playing) {
+      this.textReadBtn.disabled = false;
+      return;
+    }
+    const empty = this.textInput.value.trim().length === 0;
+    this.textReadBtn.disabled = empty || this.isComposing || this.textInput.disabled;
   }
 }

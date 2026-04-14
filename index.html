@@ -72,6 +72,23 @@
           <span id="bpm-value">120</span>
         </label>
       </div>
+      <div id="text-read-controls">
+        <textarea id="text-input" rows="2"
+          placeholder="ひらがなを入力... 例: こんにちは"
+          aria-label="読み上げテキスト入力"
+          maxlength="200"></textarea>
+        <div id="text-read-row">
+          <button id="text-read-btn" type="button" disabled>読み上げ</button>
+          <label class="slider-group">
+            <span class="slider-label">速度</span>
+            <input id="speech-rate-slider" type="range"
+              min="0.5" max="2.0" step="0.1" value="1.0"
+              aria-label="読み上げ速度" />
+            <span id="speech-rate-value">1.0x</span>
+          </label>
+        </div>
+        <canvas id="phoneme-timeline-canvas" aria-label="音素タイムライン"></canvas>
+      </div>
       <div id="spectrum-container">
         <canvas id="spectrum-canvas"></canvas>
         <canvas id="overlay-canvas"></canvas>

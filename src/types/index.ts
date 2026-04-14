@@ -214,6 +214,9 @@ export interface TimelineOptions {
   isQuestion: boolean;
 }
 
+/** Phase 9: 操作モード（manual/autoSing/textRead の3モード排他制御） */
+export type OperationMode = 'manual' | 'autoSing' | 'textRead';
+
 export const DEFAULT_PROSODY: ProsodyOptions = {
   basePitch: 110,
   highPitch: 140,

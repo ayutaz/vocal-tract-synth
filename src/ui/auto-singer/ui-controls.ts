@@ -48,6 +48,22 @@ export class AutoSingControls {
     this.autoSingBtn.classList.toggle('active', active);
   }
 
+  /**
+   * Phase 9: Auto Sing ボタンの enable/disable を制御する。
+   * textRead モードでは Auto Sing への遷移を禁止するためボタンを無効化する。
+   */
+  setEnabled(enabled: boolean): void {
+    this.autoSingBtn.disabled = !enabled;
+  }
+
+  /**
+   * Phase 9: BPM スライダーの enable/disable を制御する。
+   * textRead モードでは BPM 調整も不要なため無効化する。
+   */
+  setBpmEnabled(enabled: boolean): void {
+    this.bpmSlider.disabled = !enabled;
+  }
+
   /** リソース解放（イベント解除） */
   destroy(): void {
     this.autoSingBtn.removeEventListener('click', this.handleToggle);

@@ -42,6 +42,11 @@ const COLOR_POINT = '#a0c4ff';
 const COLOR_POINT_ACTIVE = '#ffd166';
 const COLOR_AXIS_LABEL = '#a0c4ff';
 
+// Phase 9: 狭窄位置マーカーの配色 (赤色の破線縦線)
+const COLOR_CONSTRICTION_MARKER = '#E04040';
+const CONSTRICTION_MARKER_LINE_WIDTH = 3;
+const CONSTRICTION_MARKER_DASH: [number, number] = [4, 2];
+
 // ============================================================================
 // TractEditor クラス
 // ============================================================================
@@ -67,6 +72,11 @@ export class TractEditor {
   private draggingIndex: number | null = null;
   private activePointerId: number | null = null;
   private dragEnabled: boolean = true;
+
+  // --- Phase 9: 狭窄位置マーカー ---
+  // PhonemePlayer.onPhonemeChange から渡される 44 区間 index (0=唇側, 43=声門側)。
+  // null の場合はマーカー非表示 (母音区間)。
+  private constrictionPosition: number | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -135,6 +145,19 @@ export class TractEditor {
       this.activePointerId = null;
       this.draw();
     }
+  }
+
+  /**
+   * Phase 9: 狭窄位置マーカーを描画する。
+   *
+   * テキスト読み上げの子音区間で呼び出され、44 区間のどの位置に狭窄ノイズが
+   * 発生しているかを視覚的にフィードバックする。
+   *
+   * @param position 44 区間 index (0=唇側, 43=声門側)。null でマーカー消去。
+   */
+  drawConstrictionMarker(position: number | null): void {
+    this.constrictionPosition = position;
+    this.draw();
   }
 
   /** 44区間の現在値を返す（コピーではなく読み取り専用ビュー） */
@@ -517,6 +540,33 @@ export class TractEditor {
 
     // --- 制御点（16個） ---
     this.drawControlPoints();
+
+    // --- Phase 9: 狭窄位置マーカー（子音区間のみ） ---
+    if (this.constrictionPosition !== null) {
+      this.drawConstrictionLine(this.constrictionPosition);
+    }
+  }
+
+  /**
+   * Phase 9: 指定された 44 区間 index の位置に赤色の破線縦マーカーを描画する。
+   *
+   * 座標は既存の sectionScreenX() を流用し、16 制御点の等間隔配置とは独立した
+   * 44 区間座標系上で描画する。index は [0, NUM_SECTIONS-1] にクランプ。
+   */
+  private drawConstrictionLine(idx44: number): void {
+    // 範囲外はクランプ (PhonemePlayer 側で計算された index の安全網)
+    const clamped = Math.max(0, Math.min(NUM_SECTIONS - 1, idx44));
+    const x = this.sectionScreenX(clamped);
+
+    this.ctx.save();
+    this.ctx.strokeStyle = COLOR_CONSTRICTION_MARKER;
+    this.ctx.lineWidth = CONSTRICTION_MARKER_LINE_WIDTH;
+    this.ctx.setLineDash(CONSTRICTION_MARKER_DASH);
+    this.ctx.beginPath();
+    this.ctx.moveTo(x, 0);
+    this.ctx.lineTo(x, this.cssHeight);
+    this.ctx.stroke();
+    this.ctx.restore();
   }
 
   private drawGrid(): void {
