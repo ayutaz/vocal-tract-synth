@@ -603,3 +603,155 @@ Phase 8 着手時に以下の遡及修正が必要になる可能性:
 - `Engine.sampleRate` プロパティが Phase 1-5 で公開されていない場合、Phase 8 の player から参照するために getter を追加する必要がある。
 
 これらは全て小規模変更であり、Phase 6/7 のスコープ拡大ではなく Phase 8 の前準備として扱う。
+
+### 8.4 Phase 1-7 統合レビューで見送った改善項目（Phase 8 で対応予定）
+
+Phase 7 完了時点の統合レビュー (`27ae8d6`) で指摘されたが、Phase 8 の phoneme-player 実装と一括リファクタリングする方が効率的と判断して見送った改善項目を以下に記録する。Phase 8 の integration エージェントはこれらを念頭に置き、phoneme-timeline/phoneme-player の実装と並行して対応することを推奨する。
+
+#### 8.4.1 AcousticTube 基底クラス抽出（architecture 指摘）
+
+**問題**: `VocalTract` と `NasalTract` で波動伝搬・反射係数計算・壁面損失・ソフトクリップ・放射フィルタのロジックが約 50 行重複している。両クラスのインターフェースも非対称（`NasalTract` には `setAreas` がない）。
+
+**Phase 8 での対応方針**:
+```typescript
+// src/models/acoustic-tube.ts (新規、abstract base class)
+export abstract class AcousticTube {
+  protected readonly forwardWave: Float64Array;
+  protected readonly backwardWave: Float64Array;
+  protected readonly scratchForward: Float64Array;
+  protected readonly scratchBackward: Float64Array;
+  protected readonly reflectionCoefficients: Float64Array;
+  protected readonly areas: Float64Array;
+
+  // 共通: 散乱ループ、壁面損失、ソフトクリップ、放射フィルタ
+  protected scatterHalfStep(): void { /* ... */ }
+  protected applyWallLoss(): void { /* ... */ }
+  protected applySoftClip(): void { /* ... */ }
+
+  // サブクラスで差分実装
+  protected abstract applyBoundaryConditions(input: number): void;
+}
+
+// VocalTract extends AcousticTube (可変 areas, ノイズ注入, 3 ポート接合を差分実装)
+// NasalTract extends AcousticTube (固定 areas, 鼻孔端のみ)
+```
+
+**効果**: 約 50 行のコード重複解消、将来の管（気管支分岐等）追加が容易、Phase 8 の phoneme-timeline で両管を統一的に扱える。
+
+#### 8.4.2 NasalJunction クラス切り出し + ループ分割（architecture 指摘）
+
+**問題**: 3ポート接合ロジックが `VocalTract.processSample` の散乱ループ内に 30 行分混入しており、`if (nasalOn && k === J - 1)` が散乱ループの全区間で判定される（分岐予測ミスコスト）。
+
+**Phase 8 での対応方針**:
+```typescript
+// src/models/nasal-junction.ts (新規)
+export class NasalJunction {
+  private cachedASumInv: number = 0;
+  cache(Ap: number, Ao: number, An: number): void {
+    this.cachedASumInv = 1 / (Ap + Ao + An);
+  }
+  scatter(sfJ: number, sbJm1: number, nasalBackward: number,
+          Ap: number, Ao: number, An: number): {
+    fOralNew: number; bOralNew: number; nasalInput: number;
+  } { /* ... */ }
+}
+
+// VocalTract.processSample 内で散乱ループを分割:
+// for (k = 0 .. J-2)     通常の 2ポート接合
+// if (nasalOn) {
+//   3 ポート接合を 1 回だけ実行
+// } else {
+//   2 ポート接合 (k = J-1)
+// }
+// for (k = J .. N-2)     通常の 2ポート接合
+```
+
+**効果**: ホットパスの分岐除去で CPU 1-3% の節約、VocalTract.processSample の可読性向上、NasalJunction 単体テストが可能。
+
+#### 8.4.3 ConsonantPlayer 戦略パターン（architecture 指摘）
+
+**問題**: `engine.ts` の `playConsonant()` が `fricative / plosive / affricate / flap / approximant / nasal` の 6 分岐を if-else で抱えており、Open-Closed 原則違反。カテゴリ追加のたびに engine.ts が肥大化する。
+
+**Phase 8 での対応方針**: phoneme-player.ts を実装する際、playConsonant の分岐ロジックをそのまま取り込むのではなく、戦略パターンとして整理する。
+
+```typescript
+// src/text/consonant-players/ (新規ディレクトリ)
+interface ConsonantPlayer {
+  play(preset: ConsonantPreset, currentAreas: Float64Array,
+       engine: AudioEngine, clock: AbstractClock): Promise<void>;
+}
+
+class FricativePlayer implements ConsonantPlayer { /* ... */ }
+class PlosivePlayer implements ConsonantPlayer { /* ... */ }
+class NasalPlayer implements ConsonantPlayer { /* velum 補間を吸収 */ }
+class AffricatePlayer implements ConsonantPlayer { /* ... */ }
+
+// PhonemePlayer 内で戦略をディスパッチ:
+const player = this.consonantPlayerRegistry.get(preset.category);
+await player.play(preset, areas, this.engine, this.clock);
+```
+
+**効果**: engine.ts の `playConsonant` を廃止し Phase 6 のデモ専用 API に戻せる。新しい音素カテゴリ追加時の拡張コストが線形化。PhonemePlayer の単体テストで各戦略をモック可能。
+
+#### 8.4.4 鼻腔管の区間長不一致（dsp 指摘）
+
+**問題**: 口腔管は `0.397 cm/区間`、鼻腔管は `11.4/30 = 0.38 cm/区間`。実効音速が約 4% ずれる。
+
+**Phase 8 での対応方針**: `NASAL_NUM_SECTIONS` を `30 → 29` に変更し、`11.4 / 29 ≈ 0.393 cm/区間` に統一する（口腔 0.397 cm と誤差 1% 以内）。変更は `types/index.ts` と `nasal-tract.ts` の `NASAL_AREA_PROFILE` の 1 要素削除のみ。既存テストへの影響は反射係数テーブルの再計算のみで、テスト期待値（発散なし、正の値）は不変。
+
+**効果**: 物理的に正確な伝搬速度、3ポート接合でのエイリアシング防止。
+
+#### 8.4.5 物理正当性テストの追加（dsp 指摘）
+
+**問題**: Phase 7 の nasal-tract.test.ts は「有限値」「発散なし」しか検証していない。反共鳴・鼻腔ホルマント・2↔3ポート連続性の検証が欠如。
+
+**Phase 8 での対応方針**: phoneme-player.test.ts 作成時に以下の 3 テストを併せて追加する:
+
+```typescript
+// 1. /m/ プリセット（口腔閉鎖 + velum=1.5）で反共鳴検証
+test('/m/ の反共鳴: 500-2500 Hz 帯に -15 dB 以上のディップ', () => {
+  const tract = setupVocalTractForNasalTest('m');
+  const spectrum = computeImpulseResponseFFT(tract, 4096);
+  const dip = findSpectralDip(spectrum, 500, 2500);
+  expect(dip.depth).toBeGreaterThan(15); // dB
+});
+
+// 2. 鼻腔単独（口腔を完全閉鎖 + velum 全開）で鼻腔ホルマント検証
+test('鼻腔ホルマント: ~250 Hz に共振ピーク', () => {
+  const tract = setupVocalTractWithFullClosure();
+  tract.setNasalCoupling(2.0);
+  const spectrum = sineSwipeSpectrum(tract, 50, 1000);
+  expect(findSpectralPeak(spectrum, 200, 400)).toBeDefined();
+});
+
+// 3. 2ポート ↔ 3ポート連続性（setNasalCoupling(0) で Phase 6 と同一出力）
+test('velum=0 で Phase 6 と完全一致', () => {
+  const phase6Output = simulatePhase6Vowel('a', 1000);
+  const phase7Output = simulateWithNasalZero('a', 1000);
+  expect(phase7Output).toEqual(phase6Output);
+});
+```
+
+**効果**: 鼻音の音響的正当性が数値的に保証される。Phase 9 の聴感テスト前に物理的異常を検出可能。
+
+#### 8.4.6 UI カテゴリグルーピング（ui 指摘）
+
+**問題**: 現在の `#consonant-demo` は破裂音・摩擦音・鼻音が単一のフラットなボタン列で、カテゴリ分類の視覚的グルーピングがない。
+
+**Phase 8 での対応方針**: Phase 8 では UI 変更は最小限にとどめるが、phoneme-player のデモとして `play("テスト文")` ボタンを追加する際に、既存の子音デモボタン群を `<fieldset>` + `<legend>` で 3 グループ (摩擦/破裂/鼻音) に分ける軽微なリファクタを実施する。色分けは Phase 9 の UI リファインで対応する。
+
+#### 8.4.7 Auto Sing 中のデモボタン disabled 属性（ui 指摘）
+
+**問題**: 現状 `main.ts` で `if (autoSinger.isActive()) return;` のみでユーザーへのフィードバックがない。`presetControls.setEnabled(false)` と同様に disabled 属性を付与すべき。
+
+**Phase 8 での対応方針**: Phase 8 の integration エージェントが `play()` API の UI 結線時に、`autoSinger` の状態変化イベントで `#consonant-demo .consonant-demo-btn` 全てに `disabled` 属性を動的付与する処理を追加する。完全な OperationMode 排他制御は Phase 9 で導入するが、Phase 8 段階で disabled 付与だけは対応しておく。
+
+#### 8.4.8 velum 状態の UI 可視化（ui 指摘）
+
+**問題**: `velopharyngealArea` が 0 か 1.8 かを UI から判別する手段がない。鼻音再生中の物理モデル理解が困難。
+
+**Phase 8 での対応方針**: phoneme-player のデモ時に、`#formant-display` 等と同様の情報表示エリアに「鼻腔: OPEN/CLOSED」を追加する。声道エディタ Canvas 上の鼻腔管描画（副管ライン）は Phase 9 の本格 UI 作業で対応する。
+
+---
+
+**対応優先度**: 8.4.1 〜 8.4.5 は Phase 8 の phoneme-player 実装時に一括で対応する（同じファイルを触るため分離の利点なし）。8.4.6 〜 8.4.8 は UI 変更であり、Phase 8 の最小限の `play()` デモ UI 作業に組み込む。いずれも Phase 8 のスコープ（テキスト→音素→発声）には影響せず、内部リファクタリングとして位置付ける。
