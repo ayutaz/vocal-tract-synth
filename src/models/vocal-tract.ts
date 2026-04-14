@@ -40,12 +40,13 @@
 
 import {
   NUM_SECTIONS,
-  MIN_AREA,
+  MIN_AREA_PROGRAM,
   DEFAULT_AREA,
   WALL_LOSS_FACTOR,
   GLOTTAL_REFLECTION,
   LIP_REFLECTION,
   RADIATION_ALPHA,
+  SAMPLE_RATE,
 } from '../types/index.js';
 
 // 数値発散防止のソフトクリッピング閾値
@@ -71,6 +72,24 @@ export class VocalTract {
 
   // 放射フィルタの 1 サンプル前の唇側入力 (= 1 サンプル前の f[0])
   private prevLipInput: number = 0;
+
+  // ===== Phase 6: 狭窄ノイズ注入 =====
+  // 摩擦音・破裂音バーストのために、指定区間 k の前進波 f[k] にバンドパス整形済みノイズを注入する。
+  // 全パラメータと状態をコンストラクタで事前確保し、processSample() 内ではアロケーション一切なし。
+  // -1 は無効状態 (ノイズ計算自体をスキップ)。
+  private constrictionPosition: number = -1;
+  private constrictionGain: number = 0;
+  // LCG ノイズ用シード（声門音源の乱数とは独立）
+  private noiseSeed: number = 13579;
+  // Biquad BPF 係数 (RBJ Cookbook, constant 0 dB peak gain, Direct Form II Transposed)
+  private bpfB0: number = 0;
+  private bpfB1: number = 0;
+  private bpfB2: number = 0;
+  private bpfA1: number = 0;
+  private bpfA2: number = 0;
+  // Biquad BPF 状態変数（Direct Form II Transposed）
+  private bpfZ1: number = 0;
+  private bpfZ2: number = 0;
 
   constructor() {
     this.n = NUM_SECTIONS;
@@ -128,6 +147,26 @@ export class VocalTract {
         b[k + 1] = sb[k]! + delta;
       }
 
+      // ---- 2.5 Phase 6: 狭窄ノイズ注入 ----
+      // 散乱直後・境界条件適用前に、指定区間 k の前進波 f[k] へ BPF 整形済み白色雑音を加算する。
+      // 計算コスト削減のため step===0 (1 サンプルあたり 1 回) のみ実行する。
+      // 合計 8 ops/sample (LCG 2 + Biquad 5 + 加算 1)。
+      if (step === 0 && this.constrictionPosition >= 0) {
+        // LCG 線形合同法による白色雑音 (32bit Math.imul で GC-free)
+        this.noiseSeed = (Math.imul(this.noiseSeed, 1664525) + 1013904223) | 0;
+        // 2^-31 で正規化 → [-1, 1)
+        const white = this.noiseSeed * 4.6566128730773926e-10;
+
+        // Biquad BPF (Direct Form II Transposed)
+        const bp = this.bpfB0 * white + this.bpfZ1;
+        this.bpfZ1 = this.bpfB1 * white - this.bpfA1 * bp + this.bpfZ2;
+        this.bpfZ2 = this.bpfB2 * white - this.bpfA2 * bp;
+
+        // 前進波に注入
+        const cp = this.constrictionPosition;
+        f[cp] = f[cp]! + this.constrictionGain * bp;
+      }
+
       // ---- 3. 声門端境界条件 (区間 N-1 側) ----
       // 声門から新規入射される波と、声門端反射による b[N-1] の跳ね返りを合成。
       // 散乱ループでは f[N-1] は書かれない (k+1 <= N-1 ⇒ k <= N-2) ので、
@@ -168,7 +207,9 @@ export class VocalTract {
 
   /**
    * 断面積配列を更新し、反射係数を再計算する。
-   * MIN_AREA でクランプしてゼロ除算を防ぐ。
+   * Phase 6 以降は MIN_AREA_PROGRAM (=0.01 cm²) でクランプし、子音の完全閉鎖や強い狭窄を許容する。
+   * UI ドラッグ操作の下限 (MIN_AREA=0.3 cm²) は tract-editor.ts 側で別途クランプされるため、
+   * ここでは触らない。これにより「UI 上は 0.3 cm² まで、プログラム制御は 0.01 cm² まで」の二段化を実現する。
    *
    * @param newAreas 長さ NUM_SECTIONS の断面積配列
    */
@@ -178,7 +219,7 @@ export class VocalTract {
     for (let i = 0; i < len; i++) {
       let a = newAreas[i];
       if (a === undefined) continue;
-      if (a < MIN_AREA) a = MIN_AREA;
+      if (a < MIN_AREA_PROGRAM) a = MIN_AREA_PROGRAM;
       this.areas[i] = a;
     }
     // 入力が N より短い場合は残りをデフォルト値で埋める (念のため)
@@ -189,9 +230,90 @@ export class VocalTract {
   }
 
   /**
+   * Phase 6: 狭窄ノイズ注入を設定する。
+   *
+   * 摩擦音 (s, sh, h 等) の持続的狭窄ノイズや、破裂音 (k, t, p 等) のバースト用に、
+   * 指定区間 position の前進波 f[position] へ Biquad BPF 整形済み白色雑音を加算する。
+   *
+   * Biquad 係数は RBJ Audio EQ Cookbook の BPF (constant 0 dB peak gain) で計算する。
+   *
+   * 無効化:
+   *   - position < 0
+   *   - intensity === 0
+   *   いずれかの場合は constrictionPosition = -1 とし、processSample() 内のノイズ計算をスキップする。
+   *   合わせて Biquad 状態変数 (bpfZ1, bpfZ2) もリセットする。
+   *
+   * @param position    44区間中のノイズ注入インデックス (0..N-1, 負値で無効化)
+   * @param intensity   ノイズゲイン (0..1 程度を想定。0 で無効化)
+   * @param centerFreq  BPF の中心周波数 [Hz]
+   * @param bandwidth   BPF の帯域幅 [Hz] (Q = centerFreq / bandwidth)
+   * @param sampleRate  サンプルレート [Hz] (デフォルト SAMPLE_RATE)
+   */
+  setConstrictionNoise(
+    position: number,
+    intensity: number,
+    centerFreq: number,
+    bandwidth: number,
+    sampleRate: number = SAMPLE_RATE,
+  ): void {
+    // 無効化条件: position が負、または intensity が 0 → ノイズ計算自体をスキップ
+    if (position < 0 || intensity === 0 || centerFreq <= 0 || bandwidth <= 0) {
+      this.constrictionPosition = -1;
+      this.constrictionGain = 0;
+      // フィルタ状態リセット (再有効化時のクリックノイズ防止)
+      this.bpfZ1 = 0;
+      this.bpfZ2 = 0;
+      return;
+    }
+
+    // 範囲チェック (区間外は無効化)
+    if (position >= this.n) {
+      this.constrictionPosition = -1;
+      this.constrictionGain = 0;
+      this.bpfZ1 = 0;
+      this.bpfZ2 = 0;
+      return;
+    }
+
+    this.constrictionPosition = position | 0;
+    this.constrictionGain = intensity;
+
+    // ===== RBJ Audio EQ Cookbook: BPF (constant 0 dB peak gain) =====
+    //   omega = 2π * f0 / fs
+    //   Q     = f0 / BW
+    //   alpha = sin(omega) / (2Q)
+    //   b0 =  alpha
+    //   b1 =  0
+    //   b2 = -alpha
+    //   a0 =  1 + alpha
+    //   a1 = -2 * cos(omega)
+    //   a2 =  1 - alpha
+    // 全係数を a0 で正規化して保存する。
+    const omega = (2 * Math.PI * centerFreq) / sampleRate;
+    const Q = centerFreq / bandwidth;
+    const sinOmega = Math.sin(omega);
+    const cosOmega = Math.cos(omega);
+    const alpha = sinOmega / (2 * Q);
+
+    const b0 = alpha;
+    const b1 = 0;
+    const b2 = -alpha;
+    const a0 = 1 + alpha;
+    const a1 = -2 * cosOmega;
+    const a2 = 1 - alpha;
+
+    const invA0 = 1 / a0;
+    this.bpfB0 = b0 * invA0;
+    this.bpfB1 = b1 * invA0;
+    this.bpfB2 = b2 * invA0;
+    this.bpfA1 = a1 * invA0;
+    this.bpfA2 = a2 * invA0;
+  }
+
+  /**
    * 反射係数 r[k] = (A[k+1] - A[k]) / (A[k+1] + A[k]) を計算する。
    * 区間 k と区間 k+1 の境界の反射係数で、N 区間に対して N-1 個。
-   * A[k+1] + A[k] >= 2 * MIN_AREA なのでゼロ除算は発生しない。
+   * A[k+1] + A[k] >= 2 * MIN_AREA_PROGRAM なのでゼロ除算は発生しない。
    */
   private updateReflectionCoefficients(): void {
     const A = this.areas;
@@ -205,7 +327,20 @@ export class VocalTract {
   }
 
   /**
+   * 現在の断面積配列を読み取り専用ビューとして返す。
+   *
+   * Phase 6: scheduleTransition の補間始点として「現在の声道形状」を取得するために追加。
+   * worklet-processor.ts 側で transitionStartAreas に複製する用途を想定し、
+   * 内部バッファをそのまま返す（コピーは呼び出し側の責務）。
+   */
+  getCurrentAreas(): Readonly<Float64Array> {
+    return this.areas;
+  }
+
+  /**
    * 波動変数と放射フィルタ状態をゼロクリアする。断面積は保持する。
+   * Phase 6: 狭窄ノイズ用 Biquad BPF の状態変数もクリア (フィルタ係数と
+   * constrictionPosition/Gain は保持し、setConstrictionNoise() の再呼び出しを不要にする)。
    */
   reset(): void {
     this.forwardWave.fill(0);
@@ -213,5 +348,8 @@ export class VocalTract {
     this.scratchForward.fill(0);
     this.scratchBackward.fill(0);
     this.prevLipInput = 0;
+    // Phase 6: BPF 状態変数のクリア
+    this.bpfZ1 = 0;
+    this.bpfZ2 = 0;
   }
 }

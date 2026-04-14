@@ -75,6 +75,18 @@ class VocalTractProcessor extends AudioWorkletProcessor {
   // 周期単位ジッター: 新しい声門周期開始時のみ更新
   private currentJitterFactor: number = 0;
 
+  // ===== Phase 6: サンプル精度線形補間 =====
+  // scheduleTransition メッセージで指定された targetAreas へ durationSamples かけて
+  // 線形補間する状態。補間中の中間値は transitionInterimAreas に書き込み、
+  // vocalTract.setAreas() 経由で反射係数を更新する。
+  // 全バッファはコンストラクタで事前確保し、process() 内では new を行わない (GC-free)。
+  private transitionActive: boolean = false;
+  private transitionStartAreas: Float64Array = new Float64Array(NUM_SECTIONS);
+  private transitionTargetAreas: Float64Array = new Float64Array(NUM_SECTIONS);
+  private transitionInterimAreas: Float64Array = new Float64Array(NUM_SECTIONS);
+  private transitionElapsedSamples: number = 0;
+  private transitionDurationSamples: number = 0;
+
   static get parameterDescriptors(): VocalTractParamDescriptor[] {
     return VOCAL_TRACT_PARAMETER_DESCRIPTORS;
   }
@@ -93,6 +105,8 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       if (msg.type === 'setAreas') {
         // 断面積更新 (反射係数の再計算は setAreas 内で実行される)
         // 配列長の不整合を防ぐバリデーション
+        // Phase 6: 手動操作優先 — 補間中であれば即座に確定値で上書きし、補間を停止する。
+        this.transitionActive = false;
         if (msg.areas.length === NUM_SECTIONS) {
           this.vocalTract.setAreas(msg.areas);
         }
@@ -123,6 +137,33 @@ class VocalTractProcessor extends AudioWorkletProcessor {
         if (Number.isFinite(msg.level)) {
           this.lfSource.setAspiration!(msg.level);
         }
+      } else if (msg.type === 'setConstrictionNoise') {
+        // Phase 6: 狭窄ノイズ注入の有効化/無効化
+        // position < 0 や intensity === 0 で無効化される (vocal-tract.ts 側で処理)。
+        this.vocalTract.setConstrictionNoise(
+          msg.position,
+          msg.intensity,
+          msg.centerFreq,
+          msg.bandwidth,
+        );
+      } else if (msg.type === 'scheduleTransition') {
+        // Phase 6: サンプル精度の線形補間を開始
+        // 補間途中で新たな scheduleTransition を受信した場合は、
+        // 「補間中の現在値」を始点として新 target へ即座切替える (クリック回避)。
+        // 始点と target はメッセージ内 Float64Array をコピーして保持する (構造化クローン後の参照は安全だが、
+        // 明示的にコピーすることで上流の意図しない変更からも独立させる)。
+        const currentAreas = this.vocalTract.getCurrentAreas();
+        for (let k = 0; k < NUM_SECTIONS; k++) {
+          this.transitionStartAreas[k] = currentAreas[k]!;
+          // targetAreas が NUM_SECTIONS 未満の場合は現在値を維持
+          this.transitionTargetAreas[k] = msg.targetAreas[k] ?? this.transitionStartAreas[k]!;
+        }
+        this.transitionElapsedSamples = 0;
+        this.transitionDurationSamples = msg.durationSamples > 0 ? msg.durationSamples : 1;
+        this.transitionActive = true;
+      } else if (msg.type === 'cancelTransition') {
+        // Phase 6: 補間を中断する (現在の中間状態のまま停止)
+        this.transitionActive = false;
       }
     };
   }
@@ -156,6 +197,30 @@ class VocalTractProcessor extends AudioWorkletProcessor {
     const jitterAmt = this.jitterAmount;
     const shimmerAmt = this.shimmerAmount;
     let jitterFactor = this.currentJitterFactor;
+
+    // ===== Phase 6: サンプル精度線形補間 (quantum 単位の更新) =====
+    // 128 サンプル quantum の先頭で 1 回補間を進める。
+    // (子音遷移は 5–60 ms = 220–2640 サンプルなので、128 サンプル粒度でも
+    //  人間の聴覚的に十分滑らか。process() 内のコストを最小化するため
+    //  サンプル毎ではなく quantum 毎の更新としている。)
+    if (this.transitionActive) {
+      const t = this.transitionElapsedSamples / this.transitionDurationSamples;
+      if (t >= 1.0) {
+        // 補間完了: 最終値を確定して停止
+        this.vocalTract.setAreas(this.transitionTargetAreas);
+        this.transitionActive = false;
+      } else {
+        // 線形補間: interim = start + (target - start) * t
+        const start = this.transitionStartAreas;
+        const target = this.transitionTargetAreas;
+        const interim = this.transitionInterimAreas;
+        for (let k = 0; k < NUM_SECTIONS; k++) {
+          interim[k] = start[k]! + (target[k]! - start[k]!) * t;
+        }
+        this.vocalTract.setAreas(interim);
+      }
+      this.transitionElapsedSamples += blockSize;
+    }
 
     for (let i = 0; i < blockSize; i++) {
       // 位相を進める（ジッター適用済みF0で）

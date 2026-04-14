@@ -134,9 +134,9 @@ describe('VocalTract - 反射係数（境界値）', () => {
 });
 
 describe('VocalTract - 断面積クランプ', () => {
-  it('setAreas で MIN_AREA 未満の値が MIN_AREA にクランプされる', () => {
+  it('setAreas で MIN_AREA_PROGRAM (0.01) 未満の値がクランプされる', () => {
     const tract = new VocalTract();
-    // 0 / 負の値 / MIN_AREA 未満の値を渡す
+    // 0 / 負の値 / MIN_AREA_PROGRAM 未満の値を渡す
     const areas = new Float64Array(NUM_SECTIONS);
     for (let i = 0; i < NUM_SECTIONS; i++) {
       areas[i] = 0; // ゼロ除算を誘発させる
@@ -146,6 +146,69 @@ describe('VocalTract - 断面積クランプ', () => {
     // 1サンプル処理 — クランプが効いていれば NaN は出ない
     const out = tract.processSample(1.0);
     expect(Number.isFinite(out)).toBe(true);
+  });
+
+  it('Phase 6: MIN_AREA_PROGRAM 連続区間で発散しない', () => {
+    const tract = new VocalTract();
+    // 全区間 0.01 (MIN_AREA_PROGRAM) — 完全閉鎖に近い状態
+    const areas = new Float64Array(NUM_SECTIONS).fill(0.01);
+    tract.setAreas(areas);
+
+    // 1秒相当のシミュレート
+    let maxAbs = 0;
+    for (let i = 0; i < SAMPLE_RATE; i++) {
+      const out = tract.processSample(Math.sin((2 * Math.PI * 120 * i) / SAMPLE_RATE));
+      expect(Number.isFinite(out)).toBe(true);
+      maxAbs = Math.max(maxAbs, Math.abs(out));
+    }
+    expect(maxAbs).toBeLessThan(100); // ピーク振幅 < 100（発散していない）
+  });
+});
+
+describe('VocalTract - Phase 6 狭窄ノイズ注入', () => {
+  it('setConstrictionNoise がエラーなく設定できる', () => {
+    const tract = new VocalTract();
+    expect(() => {
+      tract.setConstrictionNoise(5, 0.5, 4000, 3000);
+    }).not.toThrow();
+  });
+
+  it('ノイズ注入中も processSample が有限値を返す', () => {
+    const tract = new VocalTract();
+    tract.setConstrictionNoise(5, 0.5, 4000, 3000);
+    for (let i = 0; i < 1000; i++) {
+      const out = tract.processSample(0.5);
+      expect(Number.isFinite(out)).toBe(true);
+    }
+  });
+
+  it('position < 0 でノイズが無効化される', () => {
+    const tract = new VocalTract();
+    tract.setConstrictionNoise(5, 0.5, 4000, 3000);
+    tract.setConstrictionNoise(-1, 0, 0, 0);
+    // 無効化後もクラッシュせず動作
+    for (let i = 0; i < 100; i++) {
+      expect(Number.isFinite(tract.processSample(0.1))).toBe(true);
+    }
+  });
+
+  it('intensity === 0 でノイズが無効化される', () => {
+    const tract = new VocalTract();
+    tract.setConstrictionNoise(5, 0, 4000, 3000);
+    for (let i = 0; i < 100; i++) {
+      expect(Number.isFinite(tract.processSample(0.1))).toBe(true);
+    }
+  });
+
+  it('getCurrentAreas() が現在の断面積を返す', () => {
+    const tract = new VocalTract();
+    const areas = new Float64Array(NUM_SECTIONS).fill(2.5);
+    tract.setAreas(areas);
+    const current = tract.getCurrentAreas();
+    expect(current.length).toBe(NUM_SECTIONS);
+    for (let k = 0; k < NUM_SECTIONS; k++) {
+      expect(current[k]).toBeCloseTo(2.5, 10);
+    }
   });
 });
 

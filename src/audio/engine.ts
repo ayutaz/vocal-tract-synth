@@ -9,8 +9,14 @@
 // - AnalyserNode によるスペクトル分析（Phase 3）
 // ============================================================================
 
-import type { WorkletMessage, SourceType, GlottalModelType } from '../types/index';
-import { SAMPLE_RATE, DEFAULT_F0 } from '../types/index';
+import type {
+  WorkletMessage,
+  SourceType,
+  GlottalModelType,
+  ConsonantId,
+} from '../types/index';
+import { SAMPLE_RATE, DEFAULT_F0, NUM_SECTIONS } from '../types/index';
+import { CONSONANT_PRESETS } from './consonant-presets';
 // Vite の `?worker&url` サフィックスにより、worklet-processor.ts は JavaScript に
 // トランスパイル＆バンドルされ、その最終ファイルの URL が import される。
 // これにより AudioWorklet は ES Module として正しくロードできる。
@@ -218,6 +224,177 @@ export class AudioEngine {
     if (this.workletNode === null) return;
     const msg: WorkletMessage = { type: 'setGlottalModel', model };
     this.workletNode.port.postMessage(msg);
+  }
+
+  // ==========================================================================
+  // Phase 6: 子音基盤 API
+  // --------------------------------------------------------------------------
+  // 狭窄ノイズの注入 / サンプル精度補間 / 子音単独発声を、Worklet との間で
+  // postMessage 経由で実行する API 群。
+  // ==========================================================================
+
+  /**
+   * 狭窄ノイズ注入を設定/無効化する。
+   *
+   * 摩擦音 (/s/, /sh/ 等) の持続的乱流ノイズや、破裂音 (/k/, /t/, /p/ 等) の
+   * バーストノイズを、指定 position の前進波 f[position] へ Biquad BPF 整形済みで
+   * 加算する。position < 0 または intensity === 0 で無効化される。
+   *
+   * @param position    44 区間中のノイズ注入インデックス (0..N-1, 負値で無効化)
+   * @param intensity   ノイズゲイン (0..1 程度を想定。0 で無効化)
+   * @param centerFreq  BPF 中心周波数 [Hz]
+   * @param bandwidth   BPF 帯域幅 [Hz] (Q = centerFreq / bandwidth)
+   */
+  setConstrictionNoise(
+    position: number,
+    intensity: number,
+    centerFreq: number,
+    bandwidth: number,
+  ): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = {
+      type: 'setConstrictionNoise',
+      position,
+      intensity,
+      centerFreq,
+      bandwidth,
+    };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * Worklet 側で targetAreas へ durationSamples かけて線形補間を開始する。
+   *
+   * 補間中は process() 内で quantum 単位 (128 サンプル) に補間値を再計算し、
+   * vocal-tract.ts の反射係数を逐次更新する。補間途中で再度呼び出した場合は
+   * 「現在の補間中の値」を始点として新 target へ即座切替わる (クリック回避)。
+   *
+   * @param targetAreas      長さ NUM_SECTIONS の遷移先断面積配列
+   * @param durationSamples  遷移時間 (サンプル数)
+   */
+  scheduleTransition(targetAreas: Float64Array, durationSamples: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = {
+      type: 'scheduleTransition',
+      targetAreas,
+      durationSamples,
+    };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * 進行中の補間を中断する (現在の中間状態のまま停止)。
+   * 中断後は setAreas() で確定値を送信するか、新たな scheduleTransition で
+   * 別の遷移を開始すること。
+   */
+  cancelTransition(): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'cancelTransition' };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * 子音を単独発声する。
+   *
+   * 現在の母音形状 (currentAreas) を起点に、プリセットの constrictionRange の区間のみを
+   * constrictionArea で上書きした「狭窄形状」へ scheduleTransition で遷移し、
+   * カテゴリに応じてノイズ ON/OFF と母音への復帰遷移を setTimeout でスケジュールする。
+   *
+   * Phase 6 では setTimeout ベースの簡易シーケンサで実装する (Phase 8 の phoneme-player で
+   * AudioContext.currentTime ベースの精密スケジューリングに置き換える予定)。
+   *
+   * @param id            子音 ID
+   * @param currentAreas  先行母音の 44 区間断面積配列 (呼び出し側がコピーを保持)
+   */
+  playConsonant(id: ConsonantId, currentAreas: Float64Array): void {
+    if (!this.isRunning()) return;
+    const preset = CONSONANT_PRESETS[id];
+    if (!preset) return;
+
+    // 狭窄形状を生成: 現在の areas をコピーし、constrictionRange の区間のみ上書き。
+    // currentAreas は呼び出し側 (main.ts) で既にコピー済みの想定だが、
+    // ここでもう一度コピーして「子音用の上書きバッファ」を作ることで、
+    // 呼び出し側の元配列を破壊しないようにする。
+    const constrictionAreas = new Float64Array(currentAreas);
+    const { start, end } = preset.constrictionRange;
+    if (start >= 0) {
+      // start..end の範囲を constrictionArea で上書き (NUM_SECTIONS 範囲外は無視)
+      for (let k = start; k <= end && k < NUM_SECTIONS; k++) {
+        constrictionAreas[k] = preset.constrictionArea;
+      }
+    }
+
+    const msToSamples = (ms: number): number =>
+      Math.round((ms * SAMPLE_RATE) / 1000);
+
+    // 中央位置 (ノイズ注入用)。constrictionRange.start < 0 (例: /h/) の場合は無効値。
+    const midPos = start >= 0 ? Math.round((start + end) / 2) : -1;
+
+    if (preset.category === 'fricative') {
+      // ===== 摩擦音シーケンス =====
+      // 1. 母音 → 狭窄形状に 20 ms 遷移
+      // 2. ノイズ ON
+      // 3. frictionMs (デフォルト 70 ms) 持続
+      // 4. 狭窄 → 母音に 20 ms 遷移
+      // 5. ノイズ OFF
+      this.scheduleTransition(constrictionAreas, msToSamples(20));
+      if (preset.noise && midPos >= 0) {
+        this.setConstrictionNoise(
+          midPos,
+          preset.noise.gain,
+          preset.noise.centerFreq,
+          preset.noise.bandwidth,
+        );
+      }
+      const frictionMs = preset.frictionMs ?? 70;
+      setTimeout(() => {
+        this.scheduleTransition(currentAreas, msToSamples(20));
+        this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
+      }, frictionMs + 20);
+    } else if (preset.category === 'plosive') {
+      // ===== 破裂音シーケンス =====
+      // 1. 母音 → 閉鎖形状に 10 ms 遷移
+      // 2. closureMs (デフォルト 60 ms) 閉鎖保持
+      // 3. バーストノイズ ON + 閉鎖 → 母音に 5 ms 開放遷移
+      // 4. burstMs + max(VOT, 0) 後にノイズ OFF
+      this.scheduleTransition(constrictionAreas, msToSamples(10));
+      const closureMs = preset.closureMs ?? 60;
+      setTimeout(() => {
+        // バースト + 開放
+        if (preset.noise && midPos >= 0) {
+          this.setConstrictionNoise(
+            midPos,
+            preset.noise.gain,
+            preset.noise.centerFreq,
+            preset.noise.bandwidth,
+          );
+        }
+        this.scheduleTransition(currentAreas, msToSamples(5));
+        const burstMs = preset.burstMs ?? 10;
+        const votMs = preset.vot !== undefined ? Math.max(preset.vot, 0) : 0;
+        setTimeout(() => {
+          this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
+        }, burstMs + votMs);
+      }, closureMs + 10);
+    } else {
+      // ===== 破擦音 / 弾音 / 半母音 (簡易実装) =====
+      // 母音 → 狭窄 → 母音 を 15 ms 遷移で行う。Phase 6 の暫定実装で、
+      // Phase 8 で各カテゴリ専用の精密シーケンサに置き換える予定。
+      this.scheduleTransition(constrictionAreas, msToSamples(15));
+      if (preset.noise && midPos >= 0) {
+        this.setConstrictionNoise(
+          midPos,
+          preset.noise.gain,
+          preset.noise.centerFreq,
+          preset.noise.bandwidth,
+        );
+      }
+      const holdMs = preset.frictionMs ?? preset.closureMs ?? 30;
+      setTimeout(() => {
+        this.scheduleTransition(currentAreas, msToSamples(15));
+        this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
+      }, holdMs + 15);
+    }
   }
 
   /**
