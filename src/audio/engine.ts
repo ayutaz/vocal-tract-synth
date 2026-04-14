@@ -33,6 +33,10 @@ export class AudioEngine {
   private analyserNode: AnalyserNode | null = null;
   private frequencyParam: AudioParam | null = null;
 
+  // Phase 6 レビュー対応: 子音シーケンスの setTimeout ID を追跡し、
+  // 連打 / stop() 時に確実にキャンセルできるようにする (競合・ゴーストノイズ防止)。
+  private consonantTimeouts: ReturnType<typeof setTimeout>[] = [];
+
   /**
    * 音声合成を開始する。
    *
@@ -103,6 +107,10 @@ export class AudioEngine {
    */
   stop(): void {
     if (this.audioContext === null) return;
+
+    // Phase 6 レビュー対応: 進行中の子音シーケンスをすべてキャンセル
+    for (const t of this.consonantTimeouts) clearTimeout(t);
+    this.consonantTimeouts.length = 0;
 
     // ノード切断（念のため）
     if (this.workletNode !== null) {
@@ -311,6 +319,13 @@ export class AudioEngine {
     const preset = CONSONANT_PRESETS[id];
     if (!preset) return;
 
+    // Phase 6 レビュー対応: 連打時の競合回避
+    // 前のシーケンスが残っていると setTimeout が並走し、ノイズ ON/OFF と遷移が交錯する。
+    // 既存の timeout をすべてクリアし、ノイズも確実に停止してから新シーケンスを開始する。
+    for (const t of this.consonantTimeouts) clearTimeout(t);
+    this.consonantTimeouts.length = 0;
+    this.setConstrictionNoise(-1, 0, 0, 0);
+
     // 狭窄形状を生成: 現在の areas をコピーし、constrictionRange の区間のみ上書き。
     // currentAreas は呼び出し側 (main.ts) で既にコピー済みの想定だが、
     // ここでもう一度コピーして「子音用の上書きバッファ」を作ることで、
@@ -347,10 +362,11 @@ export class AudioEngine {
         );
       }
       const frictionMs = preset.frictionMs ?? 70;
-      setTimeout(() => {
+      const t1 = setTimeout(() => {
         this.scheduleTransition(currentAreas, msToSamples(20));
         this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
       }, frictionMs + 20);
+      this.consonantTimeouts.push(t1);
     } else if (preset.category === 'plosive') {
       // ===== 破裂音シーケンス =====
       // 1. 母音 → 閉鎖形状に 10 ms 遷移
@@ -359,7 +375,7 @@ export class AudioEngine {
       // 4. burstMs + max(VOT, 0) 後にノイズ OFF
       this.scheduleTransition(constrictionAreas, msToSamples(10));
       const closureMs = preset.closureMs ?? 60;
-      setTimeout(() => {
+      const t1 = setTimeout(() => {
         // バースト + 開放
         if (preset.noise && midPos >= 0) {
           this.setConstrictionNoise(
@@ -372,10 +388,12 @@ export class AudioEngine {
         this.scheduleTransition(currentAreas, msToSamples(5));
         const burstMs = preset.burstMs ?? 10;
         const votMs = preset.vot !== undefined ? Math.max(preset.vot, 0) : 0;
-        setTimeout(() => {
+        const t2 = setTimeout(() => {
           this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
         }, burstMs + votMs);
+        this.consonantTimeouts.push(t2);
       }, closureMs + 10);
+      this.consonantTimeouts.push(t1);
     } else {
       // ===== 破擦音 / 弾音 / 半母音 (簡易実装) =====
       // 母音 → 狭窄 → 母音 を 15 ms 遷移で行う。Phase 6 の暫定実装で、
@@ -390,10 +408,11 @@ export class AudioEngine {
         );
       }
       const holdMs = preset.frictionMs ?? preset.closureMs ?? 30;
-      setTimeout(() => {
+      const t1 = setTimeout(() => {
         this.scheduleTransition(currentAreas, msToSamples(15));
         this.setConstrictionNoise(-1, 0, 0, 0); // ノイズ OFF
       }, holdMs + 15);
+      this.consonantTimeouts.push(t1);
     }
   }
 

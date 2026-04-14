@@ -159,7 +159,13 @@ class VocalTractProcessor extends AudioWorkletProcessor {
           this.transitionTargetAreas[k] = msg.targetAreas[k] ?? this.transitionStartAreas[k]!;
         }
         this.transitionElapsedSamples = 0;
-        this.transitionDurationSamples = msg.durationSamples > 0 ? msg.durationSamples : 1;
+        // Phase 6 レビュー対応: 簡易版クリックノイズ対策
+        // 補間は quantum (128 サンプル) 単位で進めているため、5ms (220 サンプル) だと
+        // 最大 2 段階の階段しかできず耳につきやすい。下限を 512 サンプル (~12 ms) に
+        // 切り上げることで最低 4 段階の補間を保証する。
+        // サンプル単位の完全補間は Phase 8 で反射係数の直接線形補間として実装予定。
+        const requested = msg.durationSamples > 0 ? msg.durationSamples : 1;
+        this.transitionDurationSamples = requested < 512 ? 512 : requested;
         this.transitionActive = true;
       } else if (msg.type === 'cancelTransition') {
         // Phase 6: 補間を中断する (現在の中間状態のまま停止)

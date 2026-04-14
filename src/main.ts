@@ -13,6 +13,7 @@ import { SpectrumDisplay } from './ui/spectrum-display';
 import { FormantController } from './models/formant-controller';
 import { AutoSinger } from './ui/auto-singer/index';
 import { AutoSingControls } from './ui/auto-singer/ui-controls';
+import { CONSONANT_PRESETS } from './audio/consonant-presets';
 import type { ConsonantId } from './types/index';
 
 // --- DOM 要素の取得 ---
@@ -212,16 +213,20 @@ void voiceQualityControls;
 // --- Phase 6: 子音デモボタンの結線 ---
 // イベント委譲で /s/, /k/, /t/, /p/ の押下を捕捉し、現在の 44 区間断面積を
 // engine.playConsonant() に渡して子音シーケンスを実行する。
-// Auto Sing 中も含めて running 状態であれば動作する想定 (Phase 6 の暫定実装)。
+// Phase 6 レビュー対応: Auto Sing 中はスキップ / ID のランタイム検証を追加。
 const consonantDemoContainer = document.getElementById('consonant-demo');
 if (consonantDemoContainer !== null) {
   consonantDemoContainer.addEventListener('click', (e: Event) => {
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
     if (!target.classList.contains('consonant-demo-btn')) return;
+    // Phase 6 レビュー対応: Auto Sing 中はデモボタンを無効化 (タイムライン競合回避)
+    if (autoSinger.isActive()) return;
+    if (!engine.isRunning()) return;
     const id = target.dataset['consonant'];
     if (id === undefined) return;
-    if (!engine.isRunning()) return;
+    // Phase 6 レビュー対応: ランタイム検証 (unsafe cast 回避)
+    if (!(id in CONSONANT_PRESETS)) return;
     // 現在の母音形状を子音の先行/後続母音として使用するため、
     // tract-editor の sectionAreas をスナップショットコピーする。
     // (engine.playConsonant 側でも内部コピーを取るが、setTimeout で

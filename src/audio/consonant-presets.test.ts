@@ -132,29 +132,31 @@ describe('consonant-presets - カテゴリと VOT', () => {
 });
 
 describe('consonant-presets - 調音位置の区別', () => {
-  it('両唇音は範囲が唇側 (idx 0-2)', () => {
+  // Phase 6 レビュー対応: index=0 が唇側、index=43 が声門側。
+  // 解剖学的に、唇→軟口蓋 で index が増加する。
+  it('両唇音は範囲が唇側 (idx <= 3)', () => {
     // /p/, /b/, /fu/, /w/
     const bilabialIds: ConsonantId[] = ['p', 'b', 'fu'];
     for (const id of bilabialIds) {
       const preset = getConsonantPreset(id)!;
-      expect(preset.constrictionRange.start).toBeLessThanOrEqual(2);
+      expect(preset.constrictionRange.start).toBeLessThanOrEqual(3);
     }
   });
 
-  it('歯茎音は範囲が中程度 (idx 3-9)', () => {
+  it('歯茎音は範囲が唇寄り中央 (idx 3-7)', () => {
     // /t/, /d/, /s/, /z/, /ts/, /dz/
     const alveolarIds: ConsonantId[] = ['t', 'd', 's', 'z', 'ts', 'dz'];
     for (const id of alveolarIds) {
       const preset = getConsonantPreset(id)!;
       expect(preset.constrictionRange.start).toBeGreaterThanOrEqual(3);
-      expect(preset.constrictionRange.start).toBeLessThanOrEqual(9);
+      expect(preset.constrictionRange.start).toBeLessThanOrEqual(7);
     }
   });
 
-  it('軟口蓋音は範囲が声門寄り (idx >= 13)', () => {
+  it('軟口蓋音は範囲が声門寄り (idx >= 20)', () => {
     // /k/, /g/
-    expect(getConsonantPreset('k')!.constrictionRange.start).toBeGreaterThanOrEqual(13);
-    expect(getConsonantPreset('g')!.constrictionRange.start).toBeGreaterThanOrEqual(13);
+    expect(getConsonantPreset('k')!.constrictionRange.start).toBeGreaterThanOrEqual(20);
+    expect(getConsonantPreset('g')!.constrictionRange.start).toBeGreaterThanOrEqual(20);
   });
 
   it('破裂音の閉鎖面積は MIN_AREA_PROGRAM (0.01) 近傍', () => {
