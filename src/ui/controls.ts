@@ -200,6 +200,16 @@ export class PresetControls {
     this.noiseBtn.classList.toggle('active', active);
   }
 
+  /**
+   * プリセットボタンの有効/無効を一括設定する。
+   * Auto Sing 中はプリセットボタンを無効化し、停止時に再有効化する。
+   */
+  setEnabled(enabled: boolean): void {
+    for (const btn of this.presetButtons) {
+      btn.disabled = !enabled;
+    }
+  }
+
   /** リソース解放（イベント解除） */
   destroy(): void {
     this.presetContainer.removeEventListener('click', this.handlePresetClick);

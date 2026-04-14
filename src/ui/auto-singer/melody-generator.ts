@@ -153,25 +153,24 @@ export class MelodyGenerator {
 
   /** 候補に重みを割り当て（順次進行優先） */
   private assignWeights(candidates: number[]): number[] {
-    const weights: number[] = [];
+    // 隣接音の数をforループでカウント（filter()のGC回避）
+    let stepwiseCount = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      if (Math.abs(candidates[i]! - this.currentIndex) === 1) stepwiseCount++;
+    }
+    const stepwiseWeight = STEPWISE_PROBABILITY / Math.min(stepwiseCount, 2);
 
+    const weights: number[] = [];
     for (const candidateIdx of candidates) {
       const indexDist = Math.abs(candidateIdx - this.currentIndex);
-
       if (indexDist === 1) {
-        // 順次進行（隣接音）: 高確率
-        weights.push(STEPWISE_PROBABILITY / Math.min(candidates.filter(
-          c => Math.abs(c - this.currentIndex) === 1
-        ).length, 2));
+        weights.push(stepwiseWeight);
       } else if (indexDist === 2) {
-        // 小跳躍: 中確率
         weights.push(0.15);
       } else {
-        // 大跳躍: 低確率
         weights.push(0.05);
       }
     }
-
     return weights;
   }
 

@@ -94,6 +94,7 @@ export class PhraseManager {
   private adsrTime: number = 0;
   /** ADSR エンベロープ現在値 */
   private adsrValue: number = 0;
+  private releaseStartValue: number = SUSTAIN_LEVEL;
   /** 現在のノート全体の長さ (秒) — リリース開始タイミング計算用 */
   private noteDurationSec: number = 0;
   /** ノート開始からの経過時間 (秒) */
@@ -193,9 +194,9 @@ export class PhraseManager {
    */
   onNoteEnd(): void {
     if (this.adsrStage !== 'idle' && this.adsrStage !== 'release') {
+      this.releaseStartValue = this.adsrValue; // 実際の現在値を保存
       this.adsrStage = 'release';
       this.adsrTime = 0;
-      // adsrValue はリリース開始時の値をそのまま使う（tick で減衰）
     }
   }
 
@@ -301,6 +302,7 @@ export class PhraseManager {
       this.noteDurationSec > 0 &&
       this.noteElapsedSec >= this.noteDurationSec - RELEASE_SEC
     ) {
+      this.releaseStartValue = this.adsrValue; // 自動リリースでも実際値を保存
       this.adsrStage = 'release';
       this.adsrTime = 0;
     }
@@ -367,11 +369,7 @@ export class PhraseManager {
    * 通常はサステインレベルだが、アタック/ディケイ途中からリリースに入る場合もある。
    */
   private getReleaseStartValue(): number {
-    // リリース中は adsrTime=0 でリセットされるため、
-    // 開始直前の値は SUSTAIN_LEVEL（ほとんどのケース）か、
-    // アタック/ディケイ途中の値。
-    // ここではサステインレベルを返す（短いノートでも自然に聞こえる近似）。
-    return SUSTAIN_LEVEL;
+    return this.releaseStartValue;
   }
 
   // ==========================================================================

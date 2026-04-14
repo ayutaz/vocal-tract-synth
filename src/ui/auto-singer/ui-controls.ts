@@ -33,7 +33,7 @@ export class AutoSingControls {
     this.bpmSlider.addEventListener('input', this.handleBpmInput);
 
     // BPM 表示の初期値
-    this.bpmValueEl.textContent = this.bpmSlider.value;
+    this.bpmValueEl.textContent = `${this.bpmSlider.value} BPM`;
   }
 
   // ==========================================================================
@@ -66,7 +66,7 @@ export class AutoSingControls {
 
   private handleBpmInput = (): void => {
     const bpm = parseInt(this.bpmSlider.value, 10);
-    this.bpmValueEl.textContent = String(bpm);
+    this.bpmValueEl.textContent = `${bpm} BPM`;
     this.onBpmChange(bpm);
   };
 }

@@ -123,6 +123,7 @@ const controls: Controls = new Controls(
     // Auto Sing停止
     if (autoSinger.isActive()) {
       autoSinger.stop();
+      presetControls.setEnabled(true);
       autoSingControls.setActive(false);
     }
     formantController.stop();
@@ -177,14 +178,11 @@ autoSingControls = new AutoSingControls(
   bpmValueEl,
   (active) => {
     if (active && engine.isRunning()) {
-      autoSinger.start(
-        // AudioContext を取得（engine内部にあるが、getAnalyser経由で間接的に利用）
-        // AutoSinger は setInterval ベースなので AudioContext.currentTime は不要
-        // start() は内部で audioContext なしでも動作する設計
-        null as unknown as AudioContext,
-      );
+      autoSinger.start();
+      presetControls.setEnabled(false);
     } else {
       autoSinger.stop();
+      presetControls.setEnabled(true);
       autoSingControls.setActive(false);
     }
   },

@@ -20,9 +20,6 @@ import { ExpressionEngine } from './expression-engine';
 import { PhraseManager } from './phrase-manager';
 import { VowelSequencer } from './vowel-sequencer';
 import type { TransitionManager } from '../../models/vowel-presets';
-import type { AudioEngine } from '../../audio/engine';
-import type { TractEditor } from '../tract-editor';
-import type { FormantController } from '../../models/formant-controller';
 
 // ===== 定数 =====
 
@@ -44,39 +41,31 @@ const DEFAULT_F0_REF = 120;
 // ===== 依存インターフェース =====
 
 export interface AutoSingerDeps {
-  /** AudioEngine — F0 設定、jitter/shimmer 送信 */
-  engine: AudioEngine;
+  /** AudioEngine — F0 設定、jitter/shimmer 送信、AudioContext 取得 */
+  engine: {
+    setFrequency(hz: number): void;
+    setJitter(amount: number): void;
+    setShimmer(amount: number): void;
+    getAudioContext(): AudioContext | null;
+  };
   /** TransitionManager — 母音遷移 (コサイン補間) */
   transitionManager: TransitionManager;
   /** TractEditor — ドラッグ無効化の通知 */
-  tractEditor: TractEditor;
+  tractEditor: { setDragEnabled(enabled: boolean): void };
   /** FormantController — フォルマント再計算トリガー */
-  formantController: FormantController;
+  formantController: { schedule(): void };
   /** F0 スライダーの基準値を取得する関数 */
   getBaseF0: () => number;
-}
-
-// ===== 将来追加されるメソッドの型（別途統合で engine / tractEditor に追加予定） =====
-
-/** AudioEngine に setJitter/setShimmer が追加される想定 */
-interface AudioEngineWithJitterShimmer {
-  setJitter(amount: number): void;
-  setShimmer(amount: number): void;
-}
-
-/** TractEditor に setDragEnabled が追加される想定 */
-interface TractEditorWithDragControl {
-  setDragEnabled(enabled: boolean): void;
 }
 
 // ===== AutoSinger =====
 
 export class AutoSinger {
   // --- 依存 ---
-  private readonly engine: AudioEngine;
+  private readonly engine: AutoSingerDeps['engine'];
   private readonly transitionManager: TransitionManager;
-  private readonly tractEditor: TractEditor;
-  private readonly formantController: FormantController;
+  private readonly tractEditor: AutoSingerDeps['tractEditor'];
+  private readonly formantController: AutoSingerDeps['formantController'];
   private readonly getBaseF0: () => number;
 
   // --- サブモジュール ---
@@ -126,10 +115,13 @@ export class AutoSinger {
 
   /**
    * Auto Sing を開始する。
-   * AudioContext が running 状態であることが前提。
+   * engine の AudioContext が running 状態であることが前提。
    */
-  start(audioContext: AudioContext): void {
+  start(): void {
     if (this.active) return;
+
+    const audioContext = this.engine.getAudioContext();
+    if (audioContext === null) return;
 
     this.active = true;
     this.audioContext = audioContext;
@@ -343,14 +335,9 @@ export class AutoSinger {
 
   /**
    * TractEditor のドラッグを有効/無効化する。
-   * setDragEnabled メソッドが未追加の場合は何もしない（安全なフォールバック）。
    */
   private setDragEnabled(enabled: boolean): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const editor = this.tractEditor as any;
-    if (typeof editor.setDragEnabled === 'function') {
-      (editor as TractEditorWithDragControl).setDragEnabled(enabled);
-    }
+    this.tractEditor.setDragEnabled(enabled);
   }
 
   // ==========================================================================
@@ -359,25 +346,15 @@ export class AutoSinger {
 
   /**
    * ジッター量を Worklet に送信する。
-   * engine に setJitter メソッドが存在する場合はそちらを使い、
-   * なければ何もしない（安全なフォールバック）。
    */
   private sendJitter(amount: number): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const eng = this.engine as any;
-    if (typeof eng.setJitter === 'function') {
-      (eng as AudioEngineWithJitterShimmer).setJitter(amount);
-    }
+    this.engine.setJitter(amount);
   }
 
   /**
    * シマー量を Worklet に送信する。
    */
   private sendShimmer(amount: number): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const eng = this.engine as any;
-    if (typeof eng.setShimmer === 'function') {
-      (eng as AudioEngineWithJitterShimmer).setShimmer(amount);
-    }
+    this.engine.setShimmer(amount);
   }
 }

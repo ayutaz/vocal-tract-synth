@@ -208,6 +208,14 @@ export class AudioEngine {
   }
 
   /**
+   * AudioContext を返す。未初期化時は null。
+   * Auto Singer の lookahead スケジューラで currentTime を参照するために使用。
+   */
+  getAudioContext(): AudioContext | null {
+    return this.audioContext;
+  }
+
+  /**
    * 現在 running 状態か（= AudioContext が生存しているか）。
    */
   isRunning(): boolean {

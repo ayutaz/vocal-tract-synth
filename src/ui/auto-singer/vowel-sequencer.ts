@@ -30,18 +30,25 @@ export class VowelSequencer {
    * 2回目以降は前回と異なる4母音から等確率で選択。
    */
   nextVowel(): VowelId {
-    // 前回と異なる候補を構築
-    const candidates = this.lastVowel === null
-      ? SINGABLE_VOWELS
-      : SINGABLE_VOWELS.filter((v) => v !== this.lastVowel);
-
-    // 等確率で選択
-    const index = Math.floor(this.rng() * candidates.length);
-    // rng() が 1.0 を返す極端なケースのガード
-    const selected = candidates[Math.min(index, candidates.length - 1)]!;
-
-    this.lastVowel = selected;
-    return selected;
+    const n = SINGABLE_VOWELS.length; // 5
+    if (this.lastVowel === null) {
+      // 初回: 5母音から等確率
+      const idx = Math.min(Math.floor(this.rng() * n), n - 1);
+      this.lastVowel = SINGABLE_VOWELS[idx]!;
+    } else {
+      // 2回目以降: 前回を除く4母音から選択（filter不使用でGC回避）
+      const idx = Math.min(Math.floor(this.rng() * (n - 1)), n - 2);
+      let count = 0;
+      for (let i = 0; i < n; i++) {
+        if (SINGABLE_VOWELS[i] === this.lastVowel) continue;
+        if (count === idx) {
+          this.lastVowel = SINGABLE_VOWELS[i]!;
+          break;
+        }
+        count++;
+      }
+    }
+    return this.lastVowel;
   }
 
   /**
