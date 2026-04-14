@@ -152,6 +152,76 @@ export interface ConsonantPreset {
   velopharyngealArea?: number;
 }
 
+// ===== Phase 8: テキスト→音素→発声 =====
+
+/** 音素カテゴリ（text-parser で分類） */
+export type PhonemeCategory =
+  | 'vowel'
+  | 'plosive'
+  | 'fricative'
+  | 'affricate'
+  | 'nasal'
+  | 'flap'
+  | 'approximant'
+  | 'palatalized'   // 拗音
+  | 'sokuon'        // 促音 っ
+  | 'choon'         // 長音 ー
+  | 'hatsuon'       // 撥音 ん
+  | 'pause';        // 句読点
+
+/** text-parser の出力トークン */
+export interface PhonemeToken {
+  source: string;              // 元のひらがな
+  phonemes: string[];          // IPA 音素列
+  category: PhonemeCategory;
+  isLast: boolean;
+  position: number;            // 元テキストの文字 index
+}
+
+/** phoneme-timeline が生成する再生イベント */
+export interface PhonemeEvent {
+  phoneme: string;             // IPA 表記
+  startTime: number;           // 秒（先頭からの絶対時刻）
+  duration: number;            // 秒
+  tractAreas: Float64Array;    // 16 制御点
+  f0Start: number;             // Hz
+  f0End: number;               // Hz
+  sourceType: 'voiced' | 'noise' | 'voiced+noise' | 'silence';
+  amplitude: number;           // 0.0 - 1.0
+  nasalCoupling: number;       // cm² (0 = velum 閉鎖)
+  constrictionNoise?: {
+    position: number;          // 44 区間 index
+    centerFreq: number;
+    bandwidth: number;
+    intensity: number;
+  };
+  transitionMs: number;        // 直前からの遷移時間 (5-20ms)
+}
+
+/** 韻律パラメータ */
+export interface ProsodyOptions {
+  basePitch: number;          // Hz (1 モーラ目), デフォルト 110
+  highPitch: number;          // Hz (2 モーラ目以降), デフォルト 140
+  finalLowPitch: number;      // Hz (文末), デフォルト 80
+  questionBoost: number;      // Hz (疑問文), デフォルト 50
+  declinationRate: number;    // 1/秒, デフォルト 0.3
+}
+
+/** generateTimeline の入力オプション */
+export interface TimelineOptions {
+  rate: number;               // 速度係数 0.5〜2.0
+  prosody: ProsodyOptions;
+  isQuestion: boolean;
+}
+
+export const DEFAULT_PROSODY: ProsodyOptions = {
+  basePitch: 110,
+  highPitch: 140,
+  finalLowPitch: 80,
+  questionBoost: 50,
+  declinationRate: 0.3,
+};
+
 // ===== UI コールバック型 =====
 
 export type AreasChangeCallback = (areas: Float64Array) => void;

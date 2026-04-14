@@ -14,6 +14,10 @@ import { FormantController } from './models/formant-controller';
 import { AutoSinger } from './ui/auto-singer/index';
 import { AutoSingControls } from './ui/auto-singer/ui-controls';
 import { CONSONANT_PRESETS } from './audio/consonant-presets';
+import { parseHiragana, resolveHatsuonAllophones } from './text/text-parser';
+import { generateTimeline } from './text/phoneme-timeline';
+import { PhonemePlayer } from './text/phoneme-player';
+import { DEFAULT_PROSODY } from './types/index';
 import type { ConsonantId } from './types/index';
 
 // --- DOM 要素の取得 ---
@@ -236,6 +240,55 @@ if (consonantDemoContainer !== null) {
     engine.playConsonant(id as ConsonantId, areasCopy);
   });
 }
+
+// ============================================================================
+// Phase 8: テキスト読み上げ API
+// ============================================================================
+//
+// ひらがなテキストを音素列に分解し、声道制御パイプラインで連続発声する。
+// プログラマブル API: `window.play("こんにちは")` で DevTools から呼び出し可能。
+// UI 統合は Phase 9 で完成予定。
+//
+// 処理フロー: text → parseHiragana → resolveHatsuonAllophones
+//            → generateTimeline → PhonemePlayer.load → play
+
+const phonemePlayer = new PhonemePlayer(engine);
+
+export async function play(
+  text: string,
+  opts?: { rate?: number; basePitch?: number },
+): Promise<void> {
+  if (!engine.isRunning()) {
+    throw new Error('play(): AudioContext is not running. Press Start first.');
+  }
+  if (autoSinger.isActive()) {
+    throw new Error('play(): Auto Sing is active. Stop it first.');
+  }
+
+  const rate = opts?.rate ?? 1.0;
+  const basePitch = opts?.basePitch ?? 110;
+  const isQuestion = /[？?]\s*$/.test(text);
+
+  const tokens = resolveHatsuonAllophones(parseHiragana(text));
+  if (tokens.length === 0) return;
+
+  const initialAreas = new Float64Array(tractEditor.getControlPoints());
+  const events = generateTimeline(
+    tokens,
+    {
+      rate,
+      prosody: { ...DEFAULT_PROSODY, basePitch },
+      isQuestion,
+    },
+    initialAreas,
+  );
+
+  phonemePlayer.load(events);
+  await phonemePlayer.play();
+}
+
+// グローバル公開（DevTools / 後続 UI からの呼び出し用）
+(window as unknown as { play: typeof play }).play = play;
 
 // 初期フォルマント計算
 formantController.schedule();
