@@ -272,12 +272,24 @@ function getConstrictionNoise(
 
   // Phase 8 レビュー対応: /h/, /ç/ の特例処理
   // /h/ は constrictionRange={-1,-1} で狭窄ノイズが取れない問題を回避するため、
-  // 軟口蓋付近 (idx=30) に広帯域ノイズを注入して aspiration を擬似的に再現する。
-  // /ç/ も同様に均一な気息音として扱う方が自然な無声硬口蓋摩擦音になる。
-  if (phoneme === 'h' || phoneme === 'ç') {
+  // 声道内にノイズを注入して aspiration を擬似的に再現する。
+  // Phase 9 レビュー対応: /h/ と /ç/ は調音位置が異なるため別パラメータに分岐する。
+  if (phoneme === 'h') {
+    // 声門摩擦音: 声門寄り (idx=42)、低めの中心周波数。
+    // 広帯域の息だけの音で、後続母音のフォルマントに影響されて有声化する。
     return {
-      position: 30,
-      centerFreq: 2500,
+      position: 42,
+      centerFreq: 1500,
+      bandwidth: 2500,
+      intensity: 0.4,
+    };
+  }
+  if (phoneme === 'ç') {
+    // 硬口蓋摩擦音 (ひ): 硬口蓋付近 (idx=27)、高めの中心周波数。
+    // /h/ に比べて狭窄位置が前寄りで、高周波成分が卓越する。
+    return {
+      position: 27,
+      centerFreq: 3500,
       bandwidth: 3000,
       intensity: 0.4,
     };

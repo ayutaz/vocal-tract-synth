@@ -131,6 +131,25 @@ export class TractEditor {
     this.draw();
   }
 
+  /**
+   * Phase 9 レビュー対応: 制御点を視覚的にのみ更新する（onAreasChange を発火しない）。
+   *
+   * テキスト読み上げ中の自動アニメーション用。Worklet 側の断面積は
+   * PhonemePlayer.fireEvent が scheduleTransition で別途サンプル精度補間を
+   * 開始しているため、UI は再描画のみで良い。従来の setControlPoints() を
+   * 使うと onAreasChange → engine.sendAreas → Worklet の setAreas ハンドラが
+   * transitionActive = false にリセットし、補間を破壊してしまう問題があった。
+   */
+  setControlPointsVisualOnly(points: ArrayLike<number>): void {
+    if (points.length !== NUM_CONTROL_POINTS) return;
+    for (let i = 0; i < NUM_CONTROL_POINTS; i++) {
+      this.controlPoints[i] = this.clampArea(points[i]!);
+    }
+    this.interpolateToSections();
+    // onAreasChange は呼ばない (engine.sendAreas を発火させないため)
+    this.draw();
+  }
+
   /** 16制御点の現在値を返す（コピーではなく読み取り専用ビュー） */
   getControlPoints(): Readonly<Float64Array> {
     return this.controlPoints;
@@ -153,11 +172,28 @@ export class TractEditor {
    * テキスト読み上げの子音区間で呼び出され、44 区間のどの位置に狭窄ノイズが
    * 発生しているかを視覚的にフィードバックする。
    *
+   * Phase 9 レビュー対応: 内部で setConstrictionMarker + draw() を呼ぶ後方互換
+   * ラッパに変更した。onPhonemeChange コールバックでは setConstrictionMarker と
+   * setControlPointsVisualOnly をバッチ化して二重 draw() を回避する。
+   *
    * @param position 44 区間 index (0=唇側, 43=声門側)。null でマーカー消去。
    */
   drawConstrictionMarker(position: number | null): void {
-    this.constrictionPosition = position;
+    this.setConstrictionMarker(position);
     this.draw();
+  }
+
+  /**
+   * Phase 9 レビュー対応: 狭窄位置マーカーの状態のみを更新する（再描画は呼ばない）。
+   *
+   * setControlPointsVisualOnly 等と組み合わせてバッチ更新するための状態セッタ。
+   * 呼び出し元で draw() の代わりとなる処理（setControlPointsVisualOnly 内部の
+   * draw() 等）を必ず実行すること。
+   *
+   * @param position 44 区間 index (0=唇側, 43=声門側)。null でマーカー消去。
+   */
+  setConstrictionMarker(position: number | null): void {
+    this.constrictionPosition = position;
   }
 
   /** 44区間の現在値を返す（コピーではなく読み取り専用ビュー） */

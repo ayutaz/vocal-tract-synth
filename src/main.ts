@@ -324,13 +324,20 @@ operationMode = new OperationModeManager();
 const timelineCanvas = new PhonemeTimelineCanvas(phonemeTimelineCanvasEl);
 
 // PhonemePlayer のコールバック設定
+// Phase 9 レビュー対応: scheduleTransition の補間を破壊しないよう、
+// 1) setControlPoints ではなく setControlPointsVisualOnly で描画のみ更新
+// 2) 狭窄マーカーは状態のみ先に設定し、バッチで 1 回だけ draw() を呼ぶ
+// 3) ハイライトは AudioContext 基準の実時刻で行い setTimeout ジッターを排除
 phonemePlayer.onPhonemeChange((event, _index) => {
-  // 1. 声道形状の自動アニメーション
-  tractEditor.setControlPoints(event.tractAreas);
-  // 2. タイムラインのハイライト
-  timelineCanvas.highlightAt(event.startTime);
-  // 3. 子音区間の狭窄位置マーカー（母音区間では null で消去）
-  tractEditor.drawConstrictionMarker(event.constrictionNoise?.position ?? null);
+  // 1. 狭窄マーカー状態を先に設定 (draw() は呼ばない)
+  tractEditor.setConstrictionMarker(event.constrictionNoise?.position ?? null);
+  // 2. 声道形状のビジュアル更新 (内部で draw() を 1 回呼ぶ)
+  //    scheduleTransition は PhonemePlayer.fireEvent 側で既に開始済みのため、
+  //    ここでは UI の描画更新だけ行う (engine.sendAreas は発火しない)
+  tractEditor.setControlPointsVisualOnly(event.tractAreas);
+  // 3. タイムラインのハイライト (AudioContext 基準の実時刻でジッター排除)
+  const t = phonemePlayer.getCurrentPlaybackTime();
+  timelineCanvas.highlightAt(t > 0 ? t : event.startTime);
 });
 
 phonemePlayer.onComplete(() => {
@@ -376,6 +383,9 @@ textReadControls = new TextReadControls(
     // 再生開始
     play(text, { rate }).catch((err) => {
       console.error('play() error:', err);
+      // Phase 9 レビュー対応: エラーを UI の #error-text に流す
+      const message = err instanceof Error ? err.message : String(err);
+      controls.showError(`読み上げエラー: ${message}`);
       operationMode.setMode('manual');
       textReadControls.setPlaying(false);
       timelineCanvas.clear();

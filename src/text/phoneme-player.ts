@@ -279,6 +279,20 @@ export class PhonemePlayer {
     return this.startContextTime;
   }
 
+  /**
+   * Phase 9 レビュー対応: AudioContext.currentTime ベースの現在再生時刻を返す（秒）。
+   *
+   * setTimeout のジッター（~10ms 程度の誤差）を排した正確な時刻。
+   * タイムラインハイライトや外部スケジューラとの同期に使用する。
+   * 再生中 ('playing') 以外では 0 を返す。
+   */
+  getCurrentPlaybackTime(): number {
+    if (this.state !== 'playing') return 0;
+    const ctx = this.engine.getAudioContext();
+    if (ctx === null) return 0;
+    return ctx.currentTime - this.startContextTime;
+  }
+
   // ==========================================================================
   // 内部メソッド
   // ==========================================================================

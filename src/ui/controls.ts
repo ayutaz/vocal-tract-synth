@@ -589,12 +589,19 @@ export class TextReadControls {
 
   /**
    * Phase 9: textarea + 速度スライダーを一括 enable/disable する。
-   * ボタン状態は updateButtonState() が再計算する。
+   * Phase 9 レビュー対応: ボタン自体も明示的に無効化する。Auto Sing 中に
+   * textarea 無効化だけでは updateButtonState() のフォールバックに依存する
+   * ため、テキストが入力済みだとボタンが押せてしまう問題があった。
+   * 有効化時は updateButtonState() が空/IME/disabled の状態を反映して再計算する。
    */
   setEnabled(enabled: boolean): void {
     this.textInput.disabled = !enabled;
     this.rateSlider.disabled = !enabled;
-    this.updateButtonState();
+    if (!enabled) {
+      this.textReadBtn.disabled = true;
+    } else {
+      this.updateButtonState();
+    }
   }
 
   /**
@@ -661,9 +668,17 @@ export class TextReadControls {
     this.updateRateLabel();
   };
 
+  /**
+   * Phase 9 レビュー対応: rate スライダーの値表示に方向感の修飾語を追加。
+   * 「0.5x (遅) / 1.0x (普通) / 2.0x (速)」の 3 段階で示すことで、
+   * 数値だけ見てもどちらが速い/遅いか判別できるようにする。
+   */
   private updateRateLabel(): void {
     const rate = parseFloat(this.rateSlider.value);
-    this.rateValueEl.textContent = `${rate.toFixed(1)}x`;
+    let qualifier = '普通';
+    if (rate < 0.8) qualifier = '遅';
+    else if (rate > 1.3) qualifier = '速';
+    this.rateValueEl.textContent = `${rate.toFixed(1)}x (${qualifier})`;
   }
 
   /**
