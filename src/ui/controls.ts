@@ -11,7 +11,7 @@
 // - error         : Retry ボタン、エラーメッセージ表示
 // ============================================================================
 
-import type { AppState, VowelId } from '../types/index';
+import type { AppState, VowelId, GlottalModelType } from '../types/index';
 import { MIN_F0, MAX_F0 } from '../types/index';
 
 // ============================================================================
@@ -346,5 +346,122 @@ export class SliderControls {
 
   private updateVolumeDisplay(value: number): void {
     this.volumeValueEl.textContent = `${Math.round(value * 100)}%`;
+  }
+}
+
+// ============================================================================
+// Rd ラベル取得
+// ----------------------------------------------------------------------------
+// Rd 値に応じた声質ラベルを返す。
+// 0.3-0.7: Pressed, 0.7-1.2: Modal, 1.2-2.0: Lax, 2.0-2.7: Breathy
+// ============================================================================
+
+function getVoiceLabel(rd: number): string {
+  if (rd < 0.7) return 'Pressed';
+  if (rd < 1.2) return 'Modal';
+  if (rd < 2.0) return 'Lax';
+  return 'Breathy';
+}
+
+// ============================================================================
+// 声質制御 (VoiceQualityControls)
+// ----------------------------------------------------------------------------
+// Rd スライダー（声質: 0.3–2.7）、Aspiration スライダー（気息量: 0–100%）、
+// 声門モデル切替セレクトを管理する。
+// ============================================================================
+
+export class VoiceQualityControls {
+  private readonly rdSlider: HTMLInputElement;
+  private readonly rdValueEl: HTMLElement;
+  private readonly aspirationSlider: HTMLInputElement;
+  private readonly aspirationValueEl: HTMLElement;
+  private readonly modelSelect: HTMLSelectElement;
+  private readonly onRdChange: (rd: number) => void;
+  private readonly onAspirationChange: (level: number) => void;
+  private readonly onModelChange: (model: GlottalModelType) => void;
+
+  constructor(
+    rdSlider: HTMLInputElement,
+    rdValueEl: HTMLElement,
+    aspirationSlider: HTMLInputElement,
+    aspirationValueEl: HTMLElement,
+    modelSelect: HTMLSelectElement,
+    onRdChange: (rd: number) => void,
+    onAspirationChange: (level: number) => void,
+    onModelChange: (model: GlottalModelType) => void,
+  ) {
+    this.rdSlider = rdSlider;
+    this.rdValueEl = rdValueEl;
+    this.aspirationSlider = aspirationSlider;
+    this.aspirationValueEl = aspirationValueEl;
+    this.modelSelect = modelSelect;
+    this.onRdChange = onRdChange;
+    this.onAspirationChange = onAspirationChange;
+    this.onModelChange = onModelChange;
+
+    // Rd スライダー初期化
+    this.rdSlider.min = '0.3';
+    this.rdSlider.max = '2.7';
+    this.rdSlider.step = '0.1';
+    this.rdSlider.value = '1.0';
+    this.updateRdDisplay(1.0);
+
+    // Aspiration スライダー初期化
+    this.aspirationSlider.min = '0';
+    this.aspirationSlider.max = '1';
+    this.aspirationSlider.step = '0.01';
+    this.aspirationSlider.value = '0';
+    this.updateAspirationDisplay(0);
+
+    // イベント登録
+    this.rdSlider.addEventListener('input', this.handleRdInput);
+    this.aspirationSlider.addEventListener('input', this.handleAspirationInput);
+    this.modelSelect.addEventListener('change', this.handleModelChange);
+  }
+
+  // ==========================================================================
+  // 公開 API
+  // ==========================================================================
+
+  /** 外部から Rd を設定する。スライダー位置と表示も更新。 */
+  setRd(rd: number): void {
+    this.rdSlider.value = String(rd);
+    this.updateRdDisplay(rd);
+  }
+
+  /** リソース解放（イベント解除） */
+  destroy(): void {
+    this.rdSlider.removeEventListener('input', this.handleRdInput);
+    this.aspirationSlider.removeEventListener('input', this.handleAspirationInput);
+    this.modelSelect.removeEventListener('change', this.handleModelChange);
+  }
+
+  // ==========================================================================
+  // 内部
+  // ==========================================================================
+
+  private handleRdInput = (): void => {
+    const rd = parseFloat(this.rdSlider.value);
+    this.updateRdDisplay(rd);
+    this.onRdChange(rd);
+  };
+
+  private handleAspirationInput = (): void => {
+    const level = parseFloat(this.aspirationSlider.value);
+    this.updateAspirationDisplay(level);
+    this.onAspirationChange(level);
+  };
+
+  private handleModelChange = (): void => {
+    const model = this.modelSelect.value as GlottalModelType;
+    this.onModelChange(model);
+  };
+
+  private updateRdDisplay(rd: number): void {
+    this.rdValueEl.textContent = `${rd.toFixed(1)} ${getVoiceLabel(rd)}`;
+  }
+
+  private updateAspirationDisplay(level: number): void {
+    this.aspirationValueEl.textContent = `${Math.round(level * 100)}%`;
   }
 }

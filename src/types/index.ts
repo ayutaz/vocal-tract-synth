@@ -41,15 +41,17 @@ export type SourceType = 'voiced' | 'noise';
 
 // ===== メインスレッド → Worklet 通信メッセージ型（判別共用体） =====
 
+export type GlottalModelType = 'klglott88' | 'lf';
+
 export type WorkletMessage =
   | { type: 'setAreas'; areas: ArrayLike<number> }
   | { type: 'setSourceType'; sourceType: SourceType }
   | { type: 'setOQ'; oq: number }
   | { type: 'setJitter'; amount: number }
-  | { type: 'setShimmer'; amount: number };
-  // Phase 5 で追加: { type: 'setGlottalModel'; model: 'klglott88' | 'lf' }
-  // Phase 5 で追加: { type: 'setRd'; rd: number }
-  // Phase 5 で追加: { type: 'setAspiration'; level: number }
+  | { type: 'setShimmer'; amount: number }
+  | { type: 'setGlottalModel'; model: GlottalModelType }
+  | { type: 'setRd'; rd: number }
+  | { type: 'setAspiration'; level: number };
 
 // ===== 声門音源インターフェース（Phase 2 で抽出） =====
 
@@ -58,6 +60,8 @@ export interface GlottalModel {
   generateWithMix(phase: number): number;
   setSourceType(type: SourceType): void;
   setOpenQuotient(oq: number): void;
+  setRd?(rd: number): void;
+  setAspiration?(level: number): void;
   reset(): void;
 }
 

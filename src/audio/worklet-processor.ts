@@ -46,17 +46,21 @@ declare function registerProcessor(
 // ===== 実装 =====
 
 import { Klglott88Source } from '../models/glottal-source.js';
+import { LFGlottalSource } from '../models/lf-source.js';
 import { VocalTract } from '../models/vocal-tract.js';
 import {
   VOCAL_TRACT_PARAMETER_DESCRIPTORS,
   type VocalTractParamDescriptor,
 } from './parameters.js';
 import { NUM_SECTIONS, DEFAULT_F0 } from '../types/index.js';
-import type { WorkletMessage } from '../types/index.js';
+import type { WorkletMessage, GlottalModel, GlottalModelType } from '../types/index.js';
 
 class VocalTractProcessor extends AudioWorkletProcessor {
-  // 声門音源 (KLGLOTT88) と声道フィルタ (Kelly-Lochbaum)
-  private glottalSource: Klglott88Source;
+  // 声門音源と声道フィルタ
+  private klglott88: Klglott88Source;
+  private lfSource: LFGlottalSource;
+  private glottalSource: GlottalModel; // 現在のアクティブモデル
+  private pendingModelSwitch: GlottalModelType | null = null;
   private vocalTract: VocalTract;
 
   // 位相アキュムレータ (声門音源の位相 [0, 1))
@@ -78,7 +82,9 @@ class VocalTractProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
-    this.glottalSource = new Klglott88Source();
+    this.klglott88 = new Klglott88Source();
+    this.lfSource = new LFGlottalSource();
+    this.glottalSource = this.lfSource; // デフォルトはLFモデル
     this.vocalTract = new VocalTract();
 
     // メインスレッドからの断面積 / 音源切替メッセージを受信
@@ -105,6 +111,17 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       } else if (msg.type === 'setShimmer') {
         if (Number.isFinite(msg.amount)) {
           this.shimmerAmount = msg.amount;
+        }
+      } else if (msg.type === 'setGlottalModel') {
+        // モデル切替はゼロクロス（phase≈0）で実行するため pending に
+        this.pendingModelSwitch = msg.model;
+      } else if (msg.type === 'setRd') {
+        if (Number.isFinite(msg.rd)) {
+          this.lfSource.setRd!(msg.rd);
+        }
+      } else if (msg.type === 'setAspiration') {
+        if (Number.isFinite(msg.level)) {
+          this.lfSource.setAspiration!(msg.level);
         }
       }
     };
@@ -145,14 +162,23 @@ class VocalTractProcessor extends AudioWorkletProcessor {
       phase += basePhaseIncrement * (1 + jitterFactor);
       if (phase >= 1.0) {
         phase -= 1.0;
-        // 新しい声門周期の開始 → ジッター値を更新（周期単位の変動）
+        // 新しい声門周期の開始
+        // ジッター更新
         if (jitterAmt > 0) {
           this.jitterSeed = (this.jitterSeed * 1664525 + 1013904223) >>> 0;
           jitterFactor = jitterAmt * (this.jitterSeed / 4294967296 * 2 - 1);
         }
+        // モデル切替（ゼロクロスタイミング）
+        if (this.pendingModelSwitch !== null) {
+          this.glottalSource = this.pendingModelSwitch === 'lf'
+            ? this.lfSource : this.klglott88;
+          this.pendingModelSwitch = null;
+        }
+        // LFモデルのパラメータ更新（周期開始時のみ）
+        this.lfSource.updateParams(f0);
       }
 
-      // 声門音源 (KLGLOTT88 + 有声/無声ミキシング) → 声道フィルタ
+      // 声門音源 → 声道フィルタ
       let glottalSample = this.glottalSource.generateWithMix(phase);
 
       // シマー: 周期開始時に独立シードで振幅変動（shimmerSeed使用で相関回避）

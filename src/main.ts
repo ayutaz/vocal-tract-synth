@@ -6,7 +6,7 @@
 
 import './style.css';
 import { TractEditor } from './ui/tract-editor';
-import { Controls, PresetControls, SliderControls } from './ui/controls';
+import { Controls, PresetControls, SliderControls, VoiceQualityControls } from './ui/controls';
 import { AudioEngine } from './audio/engine';
 import { TransitionManager } from './models/vowel-presets';
 import { SpectrumDisplay } from './ui/spectrum-display';
@@ -45,6 +45,11 @@ const overlayCanvas = requireElement('overlay-canvas', HTMLCanvasElement);
 const autoSingBtn = requireElement('auto-sing-btn', HTMLButtonElement);
 const bpmSlider = requireElement('bpm-slider', HTMLInputElement);
 const bpmValueEl = requireElement('bpm-value', HTMLElement);
+const rdSlider = requireElement('rd-slider', HTMLInputElement);
+const rdValue = requireElement('rd-value', HTMLElement);
+const aspirationSlider = requireElement('aspiration-slider', HTMLInputElement);
+const aspirationValue = requireElement('aspiration-value', HTMLElement);
+const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
 
 const formantF1 = document.querySelector<HTMLElement>('#formant-display .f1')!;
 const formantF2 = document.querySelector<HTMLElement>('#formant-display .f2')!;
@@ -190,6 +195,18 @@ autoSingControls = new AutoSingControls(
     autoSinger.setBpm(bpm);
   },
 );
+
+// --- 声質制御 ---
+
+const voiceQualityControls = new VoiceQualityControls(
+  rdSlider, rdValue,
+  aspirationSlider, aspirationValue,
+  modelSelect,
+  (rd) => { engine.setRd(rd); },
+  (level) => { engine.setAspiration(level); },
+  (model) => { engine.setGlottalModel(model); },
+);
+void voiceQualityControls;
 
 // 初期フォルマント計算
 formantController.schedule();

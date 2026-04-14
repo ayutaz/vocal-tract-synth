@@ -81,6 +81,26 @@ h1 {
   font-size: 0.85rem;
 }
 
+/* ===== 声質制御 ===== */
+
+#voice-quality {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+#model-select {
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  background: #16213e;
+  color: #a0c4ff;
+  border: 1px solid #334;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
 /* ===== プリセットボタン ===== */
 
 #presets {

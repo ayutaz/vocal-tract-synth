@@ -9,7 +9,7 @@
 // - AnalyserNode によるスペクトル分析（Phase 3）
 // ============================================================================
 
-import type { WorkletMessage, SourceType } from '../types/index';
+import type { WorkletMessage, SourceType, GlottalModelType } from '../types/index';
 import { SAMPLE_RATE, DEFAULT_F0 } from '../types/index';
 // Vite の `?worker&url` サフィックスにより、worklet-processor.ts は JavaScript に
 // トランスパイル＆バンドルされ、その最終ファイルの URL が import される。
@@ -187,6 +187,36 @@ export class AudioEngine {
   setShimmer(amount: number): void {
     if (this.workletNode === null) return;
     const msg: WorkletMessage = { type: 'setShimmer', amount };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * Rd パラメータ（声質）を設定する。
+   * 0.3–2.7: Pressed → Modal → Lax → Breathy
+   */
+  setRd(rd: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setRd', rd };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * 気息成分（aspiration）レベルを設定する。
+   * @param level 0.0（なし）〜 1.0（最大）
+   */
+  setAspiration(level: number): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setAspiration', level };
+    this.workletNode.port.postMessage(msg);
+  }
+
+  /**
+   * 声門音源モデルを切り替える。
+   * @param model 'klglott88' | 'lf'
+   */
+  setGlottalModel(model: GlottalModelType): void {
+    if (this.workletNode === null) return;
+    const msg: WorkletMessage = { type: 'setGlottalModel', model };
     this.workletNode.port.postMessage(msg);
   }
 
