@@ -2,7 +2,7 @@
 
 **フェーズ**: Phase 4 — 歌える
 **マイルストーン**: [Phase 4](../MILESTONES.md#phase-4-自動歌唱モード--歌える)
-**状態**: 🔲 未着手
+**状態**: ✅ 完了
 **前提条件**: Phase 3 完了（[PHASE3-001](PHASE3-001_spectrum-formant-pitch.md)）
 **成果物**: Auto Sing モード + ビブラート + 揺らぎ + フレーズ構造
 

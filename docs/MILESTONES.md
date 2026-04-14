@@ -4,11 +4,11 @@
 
 | Phase | タイトル | 状態 | チケット | 目標 |
 |-------|---------|------|---------|------|
-| 1 | 基本音声パイプライン | 🔲 未着手 | [PHASE1-001](tickets/PHASE1-001_basic-audio-pipeline.md) | 音が出る |
-| 2 | 声門音源・母音プリセット | 🔲 未着手 | [PHASE2-001](tickets/PHASE2-001_klglott88-vowel-presets.md) | 母音が聞こえる |
-| 3 | 可視化・ピッチ制御 | 🔲 未着手 | [PHASE3-001](tickets/PHASE3-001_spectrum-formant-pitch.md) | 可視化完成 |
-| 4 | 自動歌唱モード | 🔲 未着手 | [PHASE4-001](tickets/PHASE4-001_auto-singing-mode.md) | 歌える |
-| 5 | 声質向上・UI改善 | 🔲 未着手 | [PHASE5-001](tickets/PHASE5-001_lf-model-quality.md) | 品質向上 |
+| 1 | 基本音声パイプライン | ✅ 完了 | [PHASE1-001](tickets/PHASE1-001_basic-audio-pipeline.md) | 音が出る |
+| 2 | 声門音源・母音プリセット | ✅ 完了 | [PHASE2-001](tickets/PHASE2-001_klglott88-vowel-presets.md) | 母音が聞こえる |
+| 3 | 可視化・ピッチ制御 | ✅ 完了 | [PHASE3-001](tickets/PHASE3-001_spectrum-formant-pitch.md) | 可視化完成 |
+| 4 | 自動歌唱モード | ✅ 完了 | [PHASE4-001](tickets/PHASE4-001_auto-singing-mode.md) | 歌える |
+| 5 | 声質向上・UI改善 | ✅ 完了 | [PHASE5-001](tickets/PHASE5-001_lf-model-quality.md) | 品質向上 |
 
 ---
 

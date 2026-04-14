@@ -2,7 +2,7 @@
 
 **フェーズ**: Phase 5 — 品質向上
 **マイルストーン**: [Phase 5](../MILESTONES.md#phase-5-声質向上ui改善--品質向上)
-**状態**: 🔲 未着手
+**状態**: ✅ 完了
 **前提条件**: Phase 4 完了（[PHASE4-001](PHASE4-001_auto-singing-mode.md)）
 **成果物**: LF声門モデル + Rdパラメータ + 声質制御UI + UI全体リファイン
 
