@@ -252,7 +252,8 @@ if (consonantDemoContainer !== null) {
 // 処理フロー: text → parseHiragana → resolveHatsuonAllophones
 //            → generateTimeline → PhonemePlayer.load → play
 
-const phonemePlayer = new PhonemePlayer(engine);
+// Phase 8 レビュー対応: tractEditor を渡して stop() 時の UI 同期を有効化する
+const phonemePlayer = new PhonemePlayer(engine, tractEditor);
 
 export async function play(
   text: string,
@@ -265,8 +266,9 @@ export async function play(
     throw new Error('play(): Auto Sing is active. Stop it first.');
   }
 
-  const rate = opts?.rate ?? 1.0;
-  const basePitch = opts?.basePitch ?? 110;
+  // Phase 8 レビュー対応: 引数バリデーション (異常値で無音 / 異常 F0 を防ぐ)
+  const rate = Math.max(0.5, Math.min(2.0, opts?.rate ?? 1.0));
+  const basePitch = Math.max(50, Math.min(400, opts?.basePitch ?? 110));
   const isQuestion = /[？?]\s*$/.test(text);
 
   const tokens = resolveHatsuonAllophones(parseHiragana(text));

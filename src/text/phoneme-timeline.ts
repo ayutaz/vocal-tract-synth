@@ -252,6 +252,11 @@ function getTractAreas(
 /**
  * 音素ごとのノイズ注入パラメータを取得する。
  * fricative / plosive / affricate のみ。他は undefined。
+ *
+ * Phase 8 レビュー対応: /h/ と /ç/ は声門由来のため CONSONANT_PRESETS の
+ * constrictionRange={-1,-1} (h) で狭窄ノイズが取れず無音になる問題を回避。
+ * 声道の中ほど (軟口蓋付近, idx=30) に広帯域ノイズを注入することで
+ * 声門 aspiration の近似として鳴らす。
  */
 function getConstrictionNoise(
   phoneme: string,
@@ -264,6 +269,20 @@ function getConstrictionNoise(
   ) {
     return undefined;
   }
+
+  // Phase 8 レビュー対応: /h/, /ç/ の特例処理
+  // /h/ は constrictionRange={-1,-1} で狭窄ノイズが取れない問題を回避するため、
+  // 軟口蓋付近 (idx=30) に広帯域ノイズを注入して aspiration を擬似的に再現する。
+  // /ç/ も同様に均一な気息音として扱う方が自然な無声硬口蓋摩擦音になる。
+  if (phoneme === 'h' || phoneme === 'ç') {
+    return {
+      position: 30,
+      centerFreq: 2500,
+      bandwidth: 3000,
+      intensity: 0.4,
+    };
+  }
+
   // ノイズが定義されている子音のみ
   const consonantIdMap: Record<string, ConsonantId> = {
     s: 's',

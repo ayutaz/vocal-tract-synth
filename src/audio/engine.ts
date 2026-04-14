@@ -44,6 +44,15 @@ export class AudioEngine {
   // Worklet 側の実際の値とは quantum 単位の遅延があるが、クリック回避の判定用には十分。
   private currentVelumArea: number = 0;
 
+  // Phase 8 レビュー対応: ユーザー音量と音素ゲインを分離管理する。
+  // 最終出力 GainNode の値 = currentUserVolume * currentPhonemeAmp
+  // - currentUserVolume: setVolume (UI スライダー) で更新
+  // - currentPhonemeAmp: setPhonemeAmplitude (PhonemePlayer) で更新
+  // この分離により、phoneme-player が silence 区間で gain を 0 にしても
+  // ユーザーのスライダー値を破壊せず、再生終了後の復元が容易になる。
+  private currentUserVolume: number = DEFAULT_MASTER_GAIN;
+  private currentPhonemeAmp: number = 1.0;
+
   /**
    * 音声合成を開始する。
    *
@@ -90,8 +99,12 @@ export class AudioEngine {
     }
 
     // GainNode（音量制御）
+    // Phase 8 レビュー対応: 起動時に currentPhonemeAmp を 1.0 にリセットし、
+    // currentUserVolume * 1.0 (= currentUserVolume) で初期化する。
+    // 前回の stop() 後の phonemeAmp 状態を持ち越さないようにする。
+    this.currentPhonemeAmp = 1.0;
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(DEFAULT_MASTER_GAIN, ctx.currentTime);
+    gain.gain.setValueAtTime(this.currentUserVolume * this.currentPhonemeAmp, ctx.currentTime);
     this.gainNode = gain;
 
     // AnalyserNode（スペクトル分析）
@@ -175,6 +188,27 @@ export class AudioEngine {
   setFrequency(hz: number): void {
     if (this.frequencyParam === null || this.audioContext === null) return;
     this.frequencyParam.setValueAtTime(hz, this.audioContext.currentTime);
+  }
+
+  /**
+   * Phase 8 レビュー対応: F0 を現在時刻から durationSec かけて endHz まで線形ランプする。
+   *
+   * phoneme-player の音素単位 F0 微下降 (f0Start → f0End) で使用する。
+   * setFrequency が setValueAtTime のみで階段状になってしまう問題を解決する。
+   *
+   * 既存の自動化はキャンセルされ、現在値を始点にランプが開始される。
+   *
+   * @param endHz       ランプ終端の F0 [Hz]
+   * @param durationSec ランプ持続時間 [秒] (1ms 未満は 1ms にクランプ)
+   */
+  rampFrequency(endHz: number, durationSec: number): void {
+    if (this.frequencyParam === null || this.audioContext === null) return;
+    const now = this.audioContext.currentTime;
+    // 既存の自動化をキャンセルして現時点から開始
+    this.frequencyParam.cancelScheduledValues(now);
+    // 現在値を明示的に保持してからランプ
+    this.frequencyParam.setValueAtTime(this.frequencyParam.value, now);
+    this.frequencyParam.linearRampToValueAtTime(endHz, now + Math.max(0.001, durationSec));
   }
 
   /**
@@ -504,10 +538,33 @@ export class AudioEngine {
   /**
    * マスタ音量を設定する。
    * @param value 0.0（無音）〜 1.0（最大）
+   *
+   * Phase 8 レビュー対応: ユーザー音量と音素ゲインを分離管理するため、
+   * value は currentUserVolume に保存し、最終出力 = currentUserVolume * currentPhonemeAmp
+   * を設定する。これにより phoneme-player が silence 区間で gain を 0 にしても
+   * ユーザーのスライダー値を破壊しない。
    */
   setVolume(value: number): void {
     if (this.gainNode === null || this.audioContext === null) return;
-    this.gainNode.gain.setValueAtTime(value, this.audioContext.currentTime);
+    this.currentUserVolume = value;
+    const effective = value * this.currentPhonemeAmp;
+    this.gainNode.gain.setValueAtTime(effective, this.audioContext.currentTime);
+  }
+
+  /**
+   * Phase 8 レビュー対応: 音素単位の振幅スケーリング (0.0-1.0) を設定する。
+   *
+   * phoneme-player から呼び出され、silence 区間は 0 に、通常は amplitude 値を設定する。
+   * 既存の setVolume (ユーザースライダー) とは独立に動作し、最終出力 GainNode の値は
+   * currentUserVolume * currentPhonemeAmp として計算される。
+   *
+   * @param amp 音素振幅 (0.0-1.0)
+   */
+  setPhonemeAmplitude(amp: number): void {
+    if (this.gainNode === null || this.audioContext === null) return;
+    this.currentPhonemeAmp = amp;
+    const effective = this.currentUserVolume * amp;
+    this.gainNode.gain.setValueAtTime(effective, this.audioContext.currentTime);
   }
 
   /**

@@ -180,13 +180,12 @@ class VocalTractProcessor extends AudioWorkletProcessor {
           this.transitionTargetAreas[k] = msg.targetAreas[k] ?? this.transitionStartAreas[k]!;
         }
         this.transitionElapsedSamples = 0;
-        // Phase 6 レビュー対応: 簡易版クリックノイズ対策
-        // 補間は quantum (128 サンプル) 単位で進めているため、5ms (220 サンプル) だと
-        // 最大 2 段階の階段しかできず耳につきやすい。下限を 512 サンプル (~12 ms) に
-        // 切り上げることで最低 4 段階の補間を保証する。
-        // サンプル単位の完全補間は Phase 8 で反射係数の直接線形補間として実装予定。
-        const requested = msg.durationSamples > 0 ? msg.durationSamples : 1;
-        this.transitionDurationSamples = requested < 512 ? 512 : requested;
+        // Phase 8 レビュー対応: 512 サンプル下限を削除する。
+        // 旧実装は破裂音バースト 8ms (~352 サンプル) のような短い遷移を 12ms に
+        // 強制的に引き伸ばしていたが、phoneme-player の transitionMs 管理で
+        // 適切な遷移時間が指定されるため下限は不要。
+        // 短い遷移 (5-10ms) でも quantum 2-4 個分の補間で耳には十分滑らか。
+        this.transitionDurationSamples = msg.durationSamples > 0 ? msg.durationSamples : 1;
         this.transitionActive = true;
         // Phase 7: velum 補間のセットアップ
         // targetVelumArea が指定された場合のみ velum 補間を有効化する。

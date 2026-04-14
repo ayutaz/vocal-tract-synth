@@ -14,7 +14,8 @@
 
 import type { PhonemeEvent } from '../types/index';
 import type { AudioEngine } from '../audio/engine';
-import { SAMPLE_RATE, NUM_SECTIONS } from '../types/index';
+import type { TractEditor } from '../ui/tract-editor';
+import { SAMPLE_RATE, NUM_SECTIONS, NUM_CONTROL_POINTS } from '../types/index';
 
 /** 再生中音素変更通知コールバック型 */
 export type PhonemeChangeCallback = (event: PhonemeEvent, index: number) => void;
@@ -80,7 +81,16 @@ export class PhonemePlayer {
   /** play() の Promise を resolve するためのリゾルバ */
   private completeResolver: (() => void) | null = null;
 
-  constructor(private readonly engine: AudioEngine) {}
+  /**
+   * @param engine      AudioEngine インスタンス
+   * @param tractEditor (Phase 8 レビュー対応, optional) UI 状態を中性化するための TractEditor。
+   *                    stop() 時に setControlPoints で 16 制御点を中性母音に戻す。
+   *                    省略時は UI 同期をスキップ (テスト用)。
+   */
+  constructor(
+    private readonly engine: AudioEngine,
+    private readonly tractEditor?: TractEditor,
+  ) {}
 
   /**
    * イベント配列をロードする。play() の前に呼び出すこと。
@@ -94,13 +104,27 @@ export class PhonemePlayer {
   /**
    * 再生開始。返り値の Promise は再生完了時に resolve される。
    *
-   * - すでに再生中なら何もせず resolved Promise を返す。
+   * - すでに再生中の場合: Phase 8 レビュー対応で、既存タイマーをクリアして新しいイベント列で再開する。
+   *   旧実装はサイレント破棄していたが、連続 play() 呼び出し (例: UI ボタンの2回押し) で
+   *   2回目がイベントを失う問題があったため修正。
    * - イベントが空なら何もせず resolved Promise を返す。
    * - AudioContext が未起動なら reject する。
    */
   play(): Promise<void> {
-    if (this.state === 'playing') return Promise.resolve();
     if (this.events.length === 0) return Promise.resolve();
+
+    // Phase 8 レビュー対応: 既に再生中なら現在のタイマーをクリアして新規再生に切替える。
+    // stop() を呼ばない (中性化遷移を走らせない) ことで、新しい音素列の遷移が
+    // 中性形状からではなく現在の声道形状から始まり、自然な切替えが実現する。
+    if (this.state === 'playing') {
+      this.cancelAllTimeouts();
+      // completeResolver はそのまま使い回す (旧 Promise は新規 Promise に切替える前に
+      // 解放しないと旧 await 側がリークする)
+      if (this.completeResolver) {
+        this.completeResolver();
+        this.completeResolver = null;
+      }
+    }
 
     const ctx = this.engine.getAudioContext();
     if (ctx === null) {
@@ -138,6 +162,8 @@ export class PhonemePlayer {
    *
    * - 中性母音は均一管 (4.0 cm²) を 300 ms で線形補間。
    * - velum を閉鎖 (0)、狭窄ノイズを停止 (-1, 0, 0, 0)。
+   * - 音素ゲインを 1.0 に戻す (Phase 8 レビュー対応: ユーザー音量を即時復元)。
+   * - tractEditor (あれば) も中性化して UI とエンジン状態の不整合を防ぐ。
    * - play() の Promise が pending なら resolve する (await 側を解放)。
    * - すでに 'stopped' / 'idle' なら no-op。
    */
@@ -148,12 +174,19 @@ export class PhonemePlayer {
     this.state = 'stopped';
 
     // 声道を中性母音 (均一管 4.0 cm²) にソフトリセット
-    const neutralAreas = new Float64Array(16);
+    const neutralAreas = new Float64Array(NUM_CONTROL_POINTS);
     neutralAreas.fill(4.0);
     const neutral44 = interpolateAreas16To44(neutralAreas);
     this.engine.scheduleTransition(neutral44, Math.round(0.3 * SAMPLE_RATE));
     this.engine.setNasalCoupling(0);
     this.engine.setConstrictionNoise(-1, 0, 0, 0);
+    // Phase 8 レビュー対応: 音素ゲインを 1.0 に戻し、ユーザー音量を即時復元する
+    this.engine.setPhonemeAmplitude(1.0);
+
+    // Phase 8 レビュー対応: tractEditor の 16 制御点も中性化して UI を同期する
+    if (this.tractEditor) {
+      this.tractEditor.setControlPoints(neutralAreas);
+    }
 
     // play() の Promise を解放
     if (this.completeResolver) {
@@ -255,7 +288,7 @@ export class PhonemePlayer {
    *
    * - 'playing' でなければ no-op (stop / pause 後の遅延発火を無視)。
    * - 16→44 変換後 scheduleTransition で声道形状遷移を開始。
-   * - 声門音源タイプ・F0・鼻腔結合・狭窄ノイズを Engine に伝達。
+   * - 声門音源タイプ・F0・鼻腔結合・狭窄ノイズ・音素振幅を Engine に伝達。
    * - phonemeChangeCb で UI 通知。
    */
   private fireEvent(index: number): void {
@@ -273,24 +306,42 @@ export class PhonemePlayer {
     );
     this.engine.scheduleTransition(areas44, durationSamples);
 
-    // 2. 声門音源タイプ (silence 以外で voiced を使用)
-    //    Engine.setSourceType の型は 'voiced' | 'noise' のみで、
-    //    PhonemeEvent.sourceType の 'voiced+noise' は voiced 扱い。
-    if (e.sourceType === 'voiced' || e.sourceType === 'voiced+noise') {
+    // 2. 音素振幅 (Phase 8 レビュー対応)
+    //    silence 区間は 0 に、それ以外は e.amplitude を反映する。
+    //    setVolume (ユーザースライダー) とは独立に動作するため、
+    //    再生終了後にユーザー音量を復元する必要はない。
+    if (e.sourceType === 'silence') {
+      this.engine.setPhonemeAmplitude(0);
+    } else {
+      this.engine.setPhonemeAmplitude(e.amplitude);
+    }
+
+    // 3. 声門音源タイプ (Phase 8 レビュー対応で 'noise' / 'silence' も対応)
+    //    Engine.setSourceType の型は 'voiced' | 'noise' のみのため、
+    //    PhonemeEvent.sourceType を以下のようにマッピングする:
+    //    - 'voiced'        → 'voiced'
+    //    - 'voiced+noise'  → 'voiced' (狭窄ノイズで擦過音成分を加算)
+    //    - 'noise'         → 'noise' (純粋無声摩擦音)
+    //    - 'silence'       → setSourceType を呼ばない (現状維持、振幅 0 で無音化)
+    if (e.sourceType === 'noise') {
+      this.engine.setSourceType('noise');
+    } else if (e.sourceType === 'voiced' || e.sourceType === 'voiced+noise') {
       this.engine.setSourceType('voiced');
     }
 
-    // 3. F0 (基本周波数)
-    //    Phase 8 段階では setFrequency による即時設定。
-    //    f0End への線形ランプは setF0Ramp が engine.ts に追加され次第切替予定。
+    // 4. F0 (基本周波数) — Phase 8 レビュー対応: f0Start → f0End の線形ランプ
+    //    silence では f0Start=0 となり setFrequency をスキップする (前回値維持)。
     if (e.f0Start > 0) {
       this.engine.setFrequency(e.f0Start);
+      if (e.f0End > 0 && e.f0End !== e.f0Start) {
+        this.engine.rampFrequency(e.f0End, e.duration);
+      }
     }
 
-    // 4. 鼻腔結合 (velum 開放面積)
+    // 5. 鼻腔結合 (velum 開放面積)
     this.engine.setNasalCoupling(e.nasalCoupling);
 
-    // 5. 狭窄ノイズ (摩擦音 / 破裂音バースト)
+    // 6. 狭窄ノイズ (摩擦音 / 破裂音バースト)
     if (e.constrictionNoise) {
       this.engine.setConstrictionNoise(
         e.constrictionNoise.position,
@@ -302,7 +353,7 @@ export class PhonemePlayer {
       this.engine.setConstrictionNoise(-1, 0, 0, 0);
     }
 
-    // 6. UI 通知 (タイムラインハイライト等)
+    // 7. UI 通知 (タイムラインハイライト等)
     this.phonemeChangeCb?.(e, index);
   }
 
@@ -311,6 +362,7 @@ export class PhonemePlayer {
    *
    * - 'playing' でなければ no-op (stop 後の遅延発火を無視)。
    * - 狭窄ノイズと鼻腔結合を停止して安全な状態に戻す。
+   * - 音素ゲインを 1.0 に戻し、ユーザー音量を即時復元する (Phase 8 レビュー対応)。
    * - state を 'idle' に戻し、completeCb と play() の Promise を resolve。
    */
   private handleComplete(): void {
@@ -319,6 +371,8 @@ export class PhonemePlayer {
     // 終了処理: ノイズ停止 + velum 閉鎖
     this.engine.setConstrictionNoise(-1, 0, 0, 0);
     this.engine.setNasalCoupling(0);
+    // Phase 8 レビュー対応: 音素ゲインを 1.0 に戻して再生終了後の音量をユーザー設定に復元
+    this.engine.setPhonemeAmplitude(1.0);
     this.state = 'idle';
 
     this.completeCb?.();

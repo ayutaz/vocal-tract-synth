@@ -18,6 +18,8 @@ import { SAMPLE_RATE, NUM_SECTIONS } from '../types/index';
 /**
  * AudioEngine をモックする。getAudioContext は { currentTime: 0 } を返す。
  * vi.fn() は呼び出し回数 / 引数の検証に使用する。
+ *
+ * Phase 8 レビュー対応: rampFrequency / setPhonemeAmplitude を追加。
  */
 function createMockEngine(opts?: { contextNull?: boolean }) {
   const ctx = { currentTime: 0 };
@@ -26,8 +28,10 @@ function createMockEngine(opts?: { contextNull?: boolean }) {
     scheduleTransition: vi.fn(),
     setSourceType: vi.fn(),
     setFrequency: vi.fn(),
+    rampFrequency: vi.fn(),
     setNasalCoupling: vi.fn(),
     setConstrictionNoise: vi.fn(),
+    setPhonemeAmplitude: vi.fn(),
   };
 }
 
@@ -111,7 +115,7 @@ describe('PhonemePlayer', () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('既に再生中の play() 呼び出しは no-op (タイマー追加されない)', () => {
+    it('既に再生中の play() 呼び出しは旧タイマーをキャンセルして再スケジュールする (Phase 8 レビュー対応)', () => {
       const engine = createMockEngine();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const player = new PhonemePlayer(engine as any);
@@ -119,7 +123,22 @@ describe('PhonemePlayer', () => {
       void player.play();
       const beforeCount = vi.getTimerCount();
       void player.play();
+      // 同じ events を load した状態で再 play() するとタイマー数は同じ
+      // (旧タイマー全部 cancel → 新タイマー全部追加)
       expect(vi.getTimerCount()).toBe(beforeCount);
+      // state は 'playing' のまま維持
+      expect(player.getState()).toBe('playing');
+    });
+
+    it('再生中の play() 再呼び出しで前回の Promise が resolve される (Phase 8 レビュー対応)', async () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([createMockEvent(0.0, 'a', 0.5)]);
+      const firstPromise = player.play();
+      // 2回目の play() を呼ぶと前回の Promise が解放される
+      void player.play();
+      await expect(firstPromise).resolves.toBeUndefined();
     });
   });
 
@@ -239,6 +258,84 @@ describe('PhonemePlayer', () => {
       vi.advanceTimersByTime(20);
       expect(engine.setConstrictionNoise).toHaveBeenCalledWith(-1, 0, 0, 0);
     });
+
+    // Phase 8 レビュー対応: 新しい fireEvent ロジックの追加テスト
+    it('voiced イベントで setPhonemeAmplitude が e.amplitude で呼ばれる', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([createMockEvent(0.0, 'a', 0.1, { amplitude: 0.85 })]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setPhonemeAmplitude).toHaveBeenCalledWith(0.85);
+    });
+
+    it('silence イベントで setPhonemeAmplitude(0) が呼ばれる', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([
+        createMockEvent(0.0, 'Q', 0.05, { sourceType: 'silence', amplitude: 0 }),
+      ]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setPhonemeAmplitude).toHaveBeenCalledWith(0);
+    });
+
+    it('noise イベントで setSourceType("noise") が呼ばれる', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([
+        createMockEvent(0.0, 's', 0.07, { sourceType: 'noise' }),
+      ]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setSourceType).toHaveBeenCalledWith('noise');
+    });
+
+    it('f0End が f0Start と異なる場合 rampFrequency が呼ばれる', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([
+        createMockEvent(0.0, 'a', 0.1, { f0Start: 120, f0End: 117.6 }),
+      ]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setFrequency).toHaveBeenCalledWith(120);
+      expect(engine.rampFrequency).toHaveBeenCalledWith(117.6, 0.1);
+    });
+
+    it('f0Start === f0End の場合 rampFrequency は呼ばれない', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([
+        createMockEvent(0.0, 'a', 0.1, { f0Start: 120, f0End: 120 }),
+      ]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setFrequency).toHaveBeenCalledWith(120);
+      expect(engine.rampFrequency).not.toHaveBeenCalled();
+    });
+
+    it('silence イベントで setFrequency / rampFrequency が呼ばれない', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([
+        createMockEvent(0.0, 'Q', 0.05, {
+          sourceType: 'silence',
+          f0Start: 0,
+          f0End: 0,
+        }),
+      ]);
+      void player.play();
+      vi.advanceTimersByTime(20);
+      expect(engine.setFrequency).not.toHaveBeenCalled();
+      expect(engine.rampFrequency).not.toHaveBeenCalled();
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -303,6 +400,48 @@ describe('PhonemePlayer', () => {
       player.stop();
       expect(engine.setNasalCoupling).toHaveBeenCalledWith(0);
       expect(engine.setConstrictionNoise).toHaveBeenCalledWith(-1, 0, 0, 0);
+    });
+
+    // Phase 8 レビュー対応: stop で setPhonemeAmplitude(1.0) が呼ばれてユーザー音量が即時復元される
+    it('stop で setPhonemeAmplitude(1.0) が呼ばれる', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([createMockEvent(0.0, 'a', 0.1)]);
+      void player.play();
+      engine.setPhonemeAmplitude.mockClear();
+      player.stop();
+      expect(engine.setPhonemeAmplitude).toHaveBeenCalledWith(1.0);
+    });
+
+    // Phase 8 レビュー対応: tractEditor が渡されているとき stop で中性化される
+    it('tractEditor が渡されている場合 stop で setControlPoints が呼ばれて中性化される', () => {
+      const engine = createMockEngine();
+      const tractEditor = {
+        setControlPoints: vi.fn(),
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any, tractEditor as any);
+      player.load([createMockEvent(0.0, 'a', 0.1)]);
+      void player.play();
+      player.stop();
+      expect(tractEditor.setControlPoints).toHaveBeenCalledTimes(1);
+      const passedPoints = tractEditor.setControlPoints.mock.calls[0]![0] as Float64Array;
+      expect(passedPoints.length).toBe(16);
+      for (let i = 0; i < 16; i++) {
+        expect(passedPoints[i]).toBeCloseTo(4.0, 5);
+      }
+    });
+
+    it('tractEditor が省略されている場合 stop は副作用なく完了する', () => {
+      const engine = createMockEngine();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const player = new PhonemePlayer(engine as any);
+      player.load([createMockEvent(0.0, 'a', 0.1)]);
+      void player.play();
+      // tractEditor 未指定でも例外を投げない
+      expect(() => player.stop()).not.toThrow();
+      expect(player.getState()).toBe('stopped');
     });
 
     it('stop で play() の Promise が resolve される', async () => {
