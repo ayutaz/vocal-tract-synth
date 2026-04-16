@@ -142,17 +142,17 @@ describe('generateTimeline - 速度係数', () => {
     vowelTok('o', true),
   ];
 
-  it('rate=1.0 で母音 100ms ベース ＋ 文位置補正', () => {
+  it('rate=1.0 で母音 140ms ベース ＋ 文位置補正', () => {
     const events = generateTimeline(tokens, makeOpts({ rate: 1.0 }));
     expect(events.length).toBe(5);
-    // 文中の母音 (i, u, e) は 100ms × 1.0 = 0.1s
-    expect(events[1]!.duration).toBeCloseTo(0.1, 5);
-    expect(events[2]!.duration).toBeCloseTo(0.1, 5);
-    expect(events[3]!.duration).toBeCloseTo(0.1, 5);
-    // 文頭は 100ms × 1.2 = 0.12s
-    expect(events[0]!.duration).toBeCloseTo(0.12, 5);
-    // 文末は 100ms × 1.5 = 0.15s
-    expect(events[4]!.duration).toBeCloseTo(0.15, 5);
+    // 文中の母音 (i, u, e) は 140ms × 1.0 = 0.14s
+    expect(events[1]!.duration).toBeCloseTo(0.14, 5);
+    expect(events[2]!.duration).toBeCloseTo(0.14, 5);
+    expect(events[3]!.duration).toBeCloseTo(0.14, 5);
+    // 文頭は 140ms × 1.2 = 0.168s
+    expect(events[0]!.duration).toBeCloseTo(0.168, 5);
+    // 文末は 140ms × 1.5 = 0.21s
+    expect(events[4]!.duration).toBeCloseTo(0.21, 5);
   });
 
   it('速度係数 0.5x / 1.0x / 2.0x で総 duration が反比例', () => {
@@ -176,62 +176,62 @@ describe('generateTimeline - 速度係数', () => {
 // ============================================================================
 
 describe('generateTimeline - 基本カテゴリ持続時間', () => {
-  it('vowel = 100ms ベース (rate=1.0, 文中)', () => {
+  it('vowel = 140ms ベース (rate=1.0, 文中)', () => {
     // 文頭/文末位置補正を避けるため 3 母音
     const tokens = [vowelTok('a'), vowelTok('i'), vowelTok('e', true)];
     const events = generateTimeline(tokens, makeOpts());
-    // 文中 (i) のみ純粋な 100ms
-    expect(events[1]!.duration).toBeCloseTo(0.1, 5);
+    // 文中 (i) のみ純粋な 140ms
+    expect(events[1]!.duration).toBeCloseTo(0.14, 5);
   });
 
-  it('plosive = 30ms ベース', () => {
+  it('plosive = 80ms ベース', () => {
     const tokens = [
       vowelTok('a'),
       consonantTok('k', 'plosive'),
       vowelTok('a', true),
     ];
     const events = generateTimeline(tokens, makeOpts());
-    expect(events[1]!.duration).toBeCloseTo(0.03, 5);
+    expect(events[1]!.duration).toBeCloseTo(0.08, 5);
   });
 
-  it('fricative = 70ms ベース', () => {
+  it('fricative = 110ms ベース', () => {
     const tokens = [
       vowelTok('a'),
       consonantTok('s', 'fricative'),
       vowelTok('a', true),
     ];
     const events = generateTimeline(tokens, makeOpts());
-    expect(events[1]!.duration).toBeCloseTo(0.07, 5);
+    expect(events[1]!.duration).toBeCloseTo(0.11, 5);
   });
 
-  it('affricate = 90ms ベース', () => {
+  it('affricate = 120ms ベース', () => {
     const tokens = [
       vowelTok('a'),
       consonantTok('tɕ', 'affricate'),
       vowelTok('a', true),
     ];
     const events = generateTimeline(tokens, makeOpts());
-    expect(events[1]!.duration).toBeCloseTo(0.09, 5);
+    expect(events[1]!.duration).toBeCloseTo(0.12, 5);
   });
 
-  it('nasal = 50ms ベース', () => {
+  it('nasal = 90ms ベース', () => {
     const tokens = [
       vowelTok('a'),
       consonantTok('n', 'nasal'),
       vowelTok('a', true),
     ];
     const events = generateTimeline(tokens, makeOpts());
-    expect(events[1]!.duration).toBeCloseTo(0.05, 5);
+    expect(events[1]!.duration).toBeCloseTo(0.09, 5);
   });
 
-  it('flap = 25ms ベース', () => {
+  it('flap = 30ms ベース', () => {
     const tokens = [
       vowelTok('a'),
       consonantTok('ɾ', 'flap'),
       vowelTok('a', true),
     ];
     const events = generateTimeline(tokens, makeOpts());
-    expect(events[1]!.duration).toBeCloseTo(0.025, 5);
+    expect(events[1]!.duration).toBeCloseTo(0.03, 5);
   });
 });
 
@@ -331,7 +331,7 @@ describe('computeF0 - Declination', () => {
     const lateF0 = events[7]!.f0Start;
 
     expect(lateF0).toBeLessThan(earlyF0);
-    // exp(-0.3 * dt) で減衰: 約 7 モーラ × 100ms = 0.7s 後 → factor ≈ 0.81
+    // exp(-0.3 * dt) で減衰: events[].startTime から実測ベースで検証
     expect(lateF0 / earlyF0).toBeCloseTo(Math.exp(-0.3 * (events[7]!.startTime - events[1]!.startTime)), 1);
   });
 
@@ -404,18 +404,18 @@ describe('generateTimeline - 長音処理', () => {
     expect(events.length).toBe(2);
 
     // 1 番目の母音 (a) の duration が延長されている
-    // ベース: 100ms × 1.2 (文頭) = 0.12s
-    // + 長音 100ms × 1.0 (中間) = 0.1s
-    // = 0.22s
-    expect(events[0]!.duration).toBeCloseTo(0.12 + 0.1, 5);
+    // ベース: 140ms × 1.2 (文頭) = 0.168s
+    // + 長音 150ms × 1.0 (中間) = 0.15s
+    // = 0.318s
+    expect(events[0]!.duration).toBeCloseTo(0.168 + 0.15, 5);
   });
 
   it('長音は次イベントの startTime を後ろにずらす', () => {
     const tokens: PhonemeToken[] = [vowelTok('a'), choonTok(), vowelTok('i', true)];
     const events = generateTimeline(tokens, makeOpts());
 
-    // 2 番目の母音 (i) の startTime は 0.12 + 0.1 = 0.22s
-    expect(events[1]!.startTime).toBeCloseTo(0.22, 5);
+    // 2 番目の母音 (i) の startTime は 0.168 + 0.15 = 0.318s
+    expect(events[1]!.startTime).toBeCloseTo(0.318, 5);
   });
 });
 
@@ -438,8 +438,8 @@ describe('generateTimeline - 促音処理', () => {
     expect(events[1]!.sourceType).toBe('silence');
     expect(events[1]!.amplitude).toBe(0);
     expect(events[1]!.nasalCoupling).toBe(0);
-    // 持続時間: 100ms × 1.0 (中間) = 0.1s
-    expect(events[1]!.duration).toBeCloseTo(0.1, 5);
+    // 持続時間: 120ms × 1.0 (中間) = 0.12s
+    expect(events[1]!.duration).toBeCloseTo(0.12, 5);
   });
 });
 
@@ -466,10 +466,10 @@ describe('expandTokens - 拗音展開', () => {
     const events = generateTimeline(tokens, makeOpts());
     expect(events.length).toBe(2);
 
-    // palatalized は 90ms × 1.2 (文頭) = 0.108s
-    expect(events[0]!.duration).toBeCloseTo(0.108, 5);
-    // 後続母音 a は 100ms × 1.5 (文末) = 0.15s
-    expect(events[1]!.duration).toBeCloseTo(0.15, 5);
+    // palatalized は 110ms × 1.2 (文頭) = 0.132s
+    expect(events[0]!.duration).toBeCloseTo(0.132, 5);
+    // 後続母音 a は 140ms × 1.5 (文末) = 0.21s
+    expect(events[1]!.duration).toBeCloseTo(0.21, 5);
   });
 });
 

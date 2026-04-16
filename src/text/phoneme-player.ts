@@ -14,8 +14,14 @@
 
 import type { PhonemeEvent } from '../types/index';
 import type { AudioEngine } from '../audio/engine';
-import type { TractEditor } from '../ui/tract-editor';
-import { SAMPLE_RATE, NUM_SECTIONS, NUM_CONTROL_POINTS } from '../types/index';
+import { TractEditor } from '../ui/tract-editor';
+import {
+  SAMPLE_RATE,
+  NUM_SECTIONS,
+  NUM_CONTROL_POINTS,
+  MIN_AREA_PROGRAM,
+  MAX_AREA,
+} from '../types/index';
 
 /** 再生中音素変更通知コールバック型 */
 export type PhonemeChangeCallback = (event: PhonemeEvent, index: number) => void;
@@ -27,26 +33,28 @@ export type PhonemePlayerState = 'idle' | 'playing' | 'paused' | 'stopped';
 
 /**
  * 16 制御点を 44 区間に補間する。
- * Phase 8 ではシンプルに線形補間で代替（既存 tract-editor のスプライン補間と
- * 完全一致ではないが、子音遷移時の音質差は小さい）。Phase 9 で本格スプラインに
- * 置き換え可能なよう、関数として独立させる。
+ *
+ * Phase 9 音質改善: TractEditor と同じ自然3次スプラインに統一。
+ * 旧線形補間では子音狭窄区間と隣接母音値の間で折れ線が生じ、
+ * スペクトル形状が不自然だった。スプラインは 2 階微分が連続で、
+ * フォルマント遷移の聴感が滑らかになる。
+ *
+ * TractEditor の private メソッドと同等の処理を静的メソッド経由で再利用。
+ * スプラインは補間点の外側でオーバーシュート/アンダーシュートしうるため、
+ * [MIN_AREA_PROGRAM, MAX_AREA] にクランプする。
  *
  * @param points16 16 制御点の断面積 (cm²)
  * @returns 44 区間の断面積 (cm²)
  */
 function interpolateAreas16To44(points16: Float64Array): Float64Array {
+  const xs = TractEditor.controlPointXs(NUM_CONTROL_POINTS, NUM_SECTIONS);
+  const m = TractEditor.computeNaturalSplineSecondDerivatives(xs, points16);
   const out = new Float64Array(NUM_SECTIONS);
+  TractEditor.evaluateSplineAtSections(xs, points16, m, NUM_SECTIONS, out);
   for (let k = 0; k < NUM_SECTIONS; k++) {
-    // [0..43] → [0..15] にスケーリング
-    const t = (k * 15) / 43;
-    const i = Math.floor(t);
-    const frac = t - i;
-    if (i >= 15) {
-      // 末尾 (k = 43 のとき t = 15) は最終制御点をそのまま使用
-      out[k] = points16[15]!;
-    } else {
-      out[k] = points16[i]! * (1 - frac) + points16[i + 1]! * frac;
-    }
+    const v = out[k]!;
+    if (v < MIN_AREA_PROGRAM) out[k] = MIN_AREA_PROGRAM;
+    else if (v > MAX_AREA) out[k] = MAX_AREA;
   }
   return out;
 }

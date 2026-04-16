@@ -32,18 +32,22 @@ import { CONSONANT_PRESETS } from '../audio/consonant-presets';
 // ----------------------------------------------------------------------------
 
 /** カテゴリ別の基本持続時間 (ms) */
+// Phase 9 音質改善: 初期値では子音が短すぎて聴覚的に認識不可能だったため全体を増加。
+// plosive 30→80: 閉鎖+バースト+VOT を単一イベントで再現するには最低 70ms 必要。
+// nasal/hatsuon: 日本語の鼻音は長めで、特に撥音「ん」は 100ms 超が自然。
+// vowel 100→140: モーラ知覚が安定するのは 120ms 以上。
 const BASE_DURATION_MS: Record<PhonemeCategory, number> = {
-  vowel: 100,
-  plosive: 30,
-  fricative: 70,
-  affricate: 90,
-  nasal: 50,
-  flap: 25,
-  approximant: 40,
-  palatalized: 90,
-  sokuon: 100,
-  choon: 100,
-  hatsuon: 70,
+  vowel: 140,
+  plosive: 80,
+  fricative: 110,
+  affricate: 120,
+  nasal: 90,
+  flap: 30,
+  approximant: 70,
+  palatalized: 110,
+  sokuon: 120,
+  choon: 150,
+  hatsuon: 130,
   pause: 0, // ポーズは別ロジックで処理
 };
 
@@ -62,20 +66,22 @@ const PAUSE_DURATION_MS: Record<string, number> = {
 // ----------------------------------------------------------------------------
 
 /** 音素の相対振幅 (0.0-1.0) を取得する */
+// Phase 9 音質改善: 初期値は子音が小さすぎて「こんにちは」等で子音が消失。
+// 鼻音は母音と同程度、摩擦音/破裂音も形状知覚に必要なレベルまで引き上げる。
 function lookupAmplitude(phoneme: string, category: PhonemeCategory): number {
   if (category === 'vowel') {
     if (phoneme === 'a') return 1.0;
-    if (phoneme === 'e' || phoneme === 'o') return 0.85;
-    if (phoneme === 'i' || phoneme === 'ɯ') return 0.7;
+    if (phoneme === 'e' || phoneme === 'o') return 0.9;
+    if (phoneme === 'i' || phoneme === 'ɯ') return 0.8;
   }
-  if (category === 'nasal' || category === 'hatsuon') return 0.55;
-  if (category === 'fricative') return 0.3;
-  if (category === 'plosive') return 0.4;
-  if (category === 'affricate') return 0.35;
-  if (category === 'flap') return 0.45;
-  if (category === 'approximant' || category === 'palatalized') return 0.6;
+  if (category === 'nasal' || category === 'hatsuon') return 0.8;
+  if (category === 'fricative') return 0.55;
+  if (category === 'plosive') return 0.6;
+  if (category === 'affricate') return 0.55;
+  if (category === 'flap') return 0.65;
+  if (category === 'approximant' || category === 'palatalized') return 0.75;
   if (category === 'sokuon' || category === 'pause') return 0;
-  return 0.5;
+  return 0.6;
 }
 
 /** 音素の音源タイプを取得する */
@@ -105,12 +111,14 @@ function decidePosition(i: number, total: number): number {
 }
 
 /** カテゴリに応じた前イベントからの遷移時間 (ms) */
+// Phase 9 音質改善: 子音→母音のフォルマント遷移が短すぎて
+// 調音位置の手がかりが得られない問題を是正。
 function decideTransitionMs(category: PhonemeCategory): number {
-  if (category === 'vowel') return 30;
-  if (category === 'plosive' || category === 'affricate') return 8;
-  if (category === 'fricative') return 15;
-  if (category === 'nasal' || category === 'hatsuon') return 20;
-  return 15;
+  if (category === 'vowel') return 50;
+  if (category === 'plosive' || category === 'affricate') return 15;
+  if (category === 'fricative') return 25;
+  if (category === 'nasal' || category === 'hatsuon') return 35;
+  return 25;
 }
 
 // ----------------------------------------------------------------------------
