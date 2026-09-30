@@ -1,0 +1,25 @@
+name: CI
+
+# main 以外への push と pull request で、テストと本番ビルド（型チェック込み）を回す。
+# main への push は deploy.yml が同じ検査を通してから GitHub Pages へ公開する。
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
